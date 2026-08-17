@@ -1,4 +1,4 @@
-package ru.forum.adbfastboottool.ui.home
+package io.github.ncorror.nekoflash.ui.home
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,10 +17,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import ru.forum.adbfastboottool.R
-import ru.forum.adbfastboottool.ui.components.StatusCard
-import ru.forum.adbfastboottool.ui.components.StatusTone
-import ru.forum.adbfastboottool.ui.theme.NekoFlashSpacing
+import io.github.ncorror.nekoflash.R
+import io.github.ncorror.nekoflash.ui.components.StatusCard
+import io.github.ncorror.nekoflash.ui.components.StatusTone
+import io.github.ncorror.nekoflash.ui.theme.NekoFlashSpacing
 
 private data class HomeStatusItem(
     val label: String,

@@ -1,12 +1,12 @@
-package ru.forum.adbfastboottool
+package io.github.ncorror.nekoflash
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import ru.forum.adbfastboottool.ui.home.HomeScreen
-import ru.forum.adbfastboottool.ui.home.HomeUiState
-import ru.forum.adbfastboottool.ui.theme.NekoFlashTheme
+import io.github.ncorror.nekoflash.ui.home.HomeScreen
+import io.github.ncorror.nekoflash.ui.home.HomeUiState
+import io.github.ncorror.nekoflash.ui.theme.NekoFlashTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

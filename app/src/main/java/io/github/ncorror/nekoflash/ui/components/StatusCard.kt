@@ -1,4 +1,4 @@
-package ru.forum.adbfastboottool.ui.components
+package io.github.ncorror.nekoflash.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,7 +9,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import ru.forum.adbfastboottool.ui.theme.NekoFlashSpacing
+import io.github.ncorror.nekoflash.ui.theme.NekoFlashSpacing
 
 enum class StatusTone {
     Neutral,

@@ -1,4 +1,4 @@
-package ru.forum.adbfastboottool.ui.theme
+package io.github.ncorror.nekoflash.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

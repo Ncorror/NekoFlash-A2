@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "ru.forum.adbfastboottool"
+    namespace = "io.github.ncorror.nekoflash"
     compileSdk = 36
 
     defaultConfig {

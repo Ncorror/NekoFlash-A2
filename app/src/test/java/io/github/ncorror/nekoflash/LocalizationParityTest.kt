@@ -1,4 +1,4 @@
-package ru.forum.adbfastboottool
+package io.github.ncorror.nekoflash
 
 import java.io.File
 import org.junit.Assert.assertEquals

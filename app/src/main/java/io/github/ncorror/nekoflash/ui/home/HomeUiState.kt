@@ -1,4 +1,4 @@
-package ru.forum.adbfastboottool.ui.home
+package io.github.ncorror.nekoflash.ui.home
 
 data class HomeUiState(
     val device: String? = null,
