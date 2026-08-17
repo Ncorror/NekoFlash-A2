@@ -11,7 +11,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "ru.forum.adbfastboottool"
+        applicationId = "io.github.ncorror.nekoflash"
         minSdk = 26
         // Preserve current production runtime behavior until a dedicated device-validated migration.
         targetSdk = 34
