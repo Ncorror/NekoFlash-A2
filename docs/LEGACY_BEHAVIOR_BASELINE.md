@@ -91,3 +91,15 @@ legacy behavior -> regression contract -> A2 implementation -> CI -> hardware ve
 Until hardware verification exists, protocol compatibility status is:
 
 NOT YET VERIFIED
+
+## A2 rewrite rule
+
+Legacy NekoFlash is a behavioral reference, not an implementation template.
+
+A2 must preserve proven externally observable behavior while intentionally
+improving internal architecture, ownership, naming, testability, error modeling,
+and maintainability.
+
+Legacy architectural debt must not be copied merely to preserve behavior.
+Pure protocol rules should be characterized first, then expressed through clean
+A2 APIs before they are connected to Android or USB transports.
