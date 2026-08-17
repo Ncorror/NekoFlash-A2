@@ -41,15 +41,35 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-
       - name: Unit tests
-        run: ./gradlew --no-daemon :app:testDebugUnitTest
+        shell: bash
+        run: |
+          mkdir -p ci-reports
+          set -o pipefail
+          ./gradlew --no-daemon :app:testDebugUnitTest \
+            --stacktrace \
+            --warning-mode all \
+            --console=plain 2>&1 | tee ci-reports/unit_test_log.txt
 
       - name: Lint
-        run: ./gradlew --no-daemon :app:lintDebug
+        shell: bash
+        run: |
+          mkdir -p ci-reports
+          set -o pipefail
+          ./gradlew --no-daemon :app:lintDebug \
+            --stacktrace \
+            --warning-mode all \
+            --console=plain 2>&1 | tee ci-reports/lint_log.txt
 
       - name: Assemble debug
-        run: ./gradlew --no-daemon :app:assembleDebug
+        shell: bash
+        run: |
+          mkdir -p ci-reports
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleDebug \
+            --stacktrace \
+            --warning-mode all \
+            --console=plain 2>&1 | tee ci-reports/debug_build_log.txt
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v6
@@ -58,3 +78,18 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload CI reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: NekoFlash-${{ github.sha }}-reports
+          path: |
+            ci-reports/*.txt
+            app/build/test-results/testDebugUnitTest/**
+            app/build/reports/tests/testDebugUnitTest/**
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.xml
+            app/build/reports/lint-results-*.txt
+          if-no-files-found: ignore
+          retention-days: 30
