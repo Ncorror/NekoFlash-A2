@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NekoFlash</string>
+    <string name="home_heading">Device overview</string>
+    <string name="home_description">USB and operation status will appear here when a device is connected.</string>
+    <string name="status_device">Device</string>
+    <string name="status_mode">Mode</string>
+    <string name="status_usb">USB</string>
+    <string name="status_slot">Slot</string>
+    <string name="status_topology">Topology</string>
+    <string name="status_unlock">Unlock state</string>
+    <string name="status_operation">Active operation</string>
+    <string name="device_not_connected">No device connected</string>
+    <string name="usb_connected">Connected</string>
+    <string name="usb_disconnected">Disconnected</string>
+    <string name="operation_none">None</string>
+    <string name="value_unknown">Unknown</string>
+</resources>

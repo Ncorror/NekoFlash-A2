@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NekoFlash</string>
+    <string name="home_heading">Обзор устройства</string>
+    <string name="home_description">Состояние USB и операции появится здесь после подключения устройства.</string>
+    <string name="status_device">Устройство</string>
+    <string name="status_mode">Режим</string>
+    <string name="status_usb">USB</string>
+    <string name="status_slot">Слот</string>
+    <string name="status_topology">Топология</string>
+    <string name="status_unlock">Состояние разблокировки</string>
+    <string name="status_operation">Активная операция</string>
+    <string name="device_not_connected">Устройство не подключено</string>
+    <string name="usb_connected">Подключено</string>
+    <string name="usb_disconnected">Отключено</string>
+    <string name="operation_none">Нет</string>
+    <string name="value_unknown">Неизвестно</string>
+</resources>
