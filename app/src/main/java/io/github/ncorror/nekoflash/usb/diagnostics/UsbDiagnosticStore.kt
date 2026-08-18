@@ -4,13 +4,19 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import java.time.Instant
+import java.util.UUID
 
-/** Process-local structured USB evidence store. Export/share UI is added separately. */
+/** One process-local structured USB evidence run. Export/share UI is added separately. */
 class UsbDiagnosticStore(context: Context) {
-    private val directory: File = (
+    private val rootDirectory: File = (
         context.getExternalFilesDir("diagnostics")
             ?: File(context.filesDir, "diagnostics")
         ).apply { mkdirs() }
+
+    private val directory: File = File(
+        rootDirectory,
+        "usb-run-${System.currentTimeMillis()}-${UUID.randomUUID()}",
+    ).apply { mkdirs() }
 
     private val eventsFile = File(directory, "usb-events.txt")
 
@@ -43,6 +49,7 @@ class UsbDiagnosticStore(context: Context) {
         )
     }
 
+    /** Returns only this process run, never the parent containing older runs. */
     fun directoryPath(): String = directory.absolutePath
 
     private fun writeSafely(file: File, append: Boolean, content: String) {

@@ -24,7 +24,12 @@ The machine-readable schema is
 
 ## Files
 
-`UsbDiagnosticStore` writes into the app-specific diagnostics directory:
+`UsbDiagnosticStore` writes into the app-specific diagnostics root. Stage 6A4A
+refines that root into one unique `usb-run-<epoch>-<uuid>/` directory per process
+store instance so a later export cannot silently mix evidence left by an older
+process with the run currently being validated.
+
+Each run directory contains only the existing evidence families:
 
 - `usb-events.txt` for compact one-line lifecycle events;
 - `usb-session-<sessionId>.json` for machine-readable evidence;
@@ -33,8 +38,9 @@ The machine-readable schema is
 The store is fail-soft for diagnostics I/O: inability to write evidence is sent
 to Android logcat and does not mutate USB/protocol behavior.
 
-Explicit ZIP export/share is intentionally separate and must be implemented
-before the first A2 hardware validation run so evidence can be collected without
-relying on logcat or direct access to Android app-private storage.
+Stage 6A4A also adds the pure ZIP writer for one run. Android document export UI
+remains a separate wiring step and must be completed before the first A2 hardware
+validation run so evidence can be collected without relying on logcat or direct
+access to Android app-private storage.
 
 A2 hardware status remains **NOT YET VERIFIED**.
