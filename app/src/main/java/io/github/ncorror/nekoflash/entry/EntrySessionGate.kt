@@ -18,6 +18,7 @@ class EntrySessionGate(
         fun persistRiskAcknowledged(schemaVersion: Int): Boolean
     }
 
+    @Volatile
     private var sessionAuthorized = false
 
     fun isSessionAuthorized(): Boolean = sessionAuthorized

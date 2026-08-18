@@ -71,6 +71,19 @@ class EntrySessionGateTest {
     }
 
     @Test
+    fun `same process can authorize a later entry without rewriting acknowledgement`() {
+        val persistence = FakePersistence()
+        val gate = EntrySessionGate(persistence)
+
+        assertTrue(gate.authorize(userAcceptedRisk = true))
+        gate.endSession()
+        assertTrue(gate.authorize(userAcceptedRisk = true))
+
+        assertTrue(gate.isSessionAuthorized())
+        assertEquals(1, persistence.persistCalls)
+    }
+
+    @Test
     fun `new gate over same persistence starts a new unauthorized process session`() {
         val persistence = FakePersistence()
         val first = EntrySessionGate(persistence)

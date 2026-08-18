@@ -15,4 +15,10 @@
     <string name="usb_disconnected">Disconnected</string>
     <string name="operation_none">None</string>
     <string name="value_unknown">Unknown</string>
+    <string name="entry_heading">Before you continue</string>
+    <string name="entry_description">USB discovery and device operations stay inactive until you continue.</string>
+    <string name="entry_risk_acknowledgement">I accept the flashing and device-modification risks</string>
+    <string name="entry_continue">Continue</string>
+    <string name="entry_risk_required">Confirm the device-modification risks before continuing.</string>
+    <string name="entry_acknowledgement_save_failed">Could not save the risk acknowledgement. Try again.</string>
 </resources>

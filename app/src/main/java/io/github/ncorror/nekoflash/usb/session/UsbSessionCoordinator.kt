@@ -46,6 +46,7 @@ class UsbSessionCoordinator(context: Context) {
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (!started) return
             if (intent?.action == permissionAction) {
                 handlePermissionResult(intent)
             }
@@ -54,6 +55,7 @@ class UsbSessionCoordinator(context: Context) {
 
     private val detachReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (!started) return
             if (intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
                 val device = intent.usbDeviceExtra()
                 if (device == null) {
@@ -67,10 +69,28 @@ class UsbSessionCoordinator(context: Context) {
 
     fun start() {
         if (started) return
-        started = true
         registerPermissionReceiver()
         registerDetachReceiver()
+        started = true
         diagnostics.event("INFO", "USB_COORDINATOR_STARTED")
+    }
+
+    /**
+     * Ends the current authorized USB automation lease. No transport exists yet,
+     * so descriptor/session state can be discarded instead of surviving a UI exit.
+     */
+    fun stop() {
+        if (!started) return
+        started = false
+        cancelStartupScan()
+        stopModeSwitchWatch()
+        permissionTimeouts.values.forEach(handler::removeCallbacks)
+        permissionTimeouts.clear()
+        permissionRegistry = UsbPermissionPolicy.Registry()
+        currentCandidate = null
+        appContext.unregisterReceiver(permissionReceiver)
+        appContext.unregisterReceiver(detachReceiver)
+        diagnostics.event("INFO", "USB_COORDINATOR_STOPPED")
     }
 
     private fun registerPermissionReceiver() {
@@ -110,10 +130,28 @@ class UsbSessionCoordinator(context: Context) {
     }
 
     /**
+     * Authorizes a UI entry that was visible before USB automation was activated.
+     * A pre-gate attach payload is consumed without inspection, then the normal
+     * startup scan observes the descriptors that are actually present now.
+     */
+    fun onEntryAuthorized(intent: Intent?): Long? {
+        if (!started) return null
+        if (
+            intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED &&
+            !intent.getBooleanExtra(EXTRA_USB_INTENT_CONSUMED, false)
+        ) {
+            intent.putExtra(EXTRA_USB_INTENT_CONSUMED, true)
+            diagnostics.event("INFO", "USB_PREAUTH_ATTACH_NORMALIZED")
+        }
+        return onActivityCreated(intent)
+    }
+
+    /**
      * A new Activity instance starts a new legacy-equivalent startup-scan entry.
      * The returned generation is only a lifecycle token; USB state remains here.
      */
-    fun onActivityCreated(intent: Intent?): Long {
+    fun onActivityCreated(intent: Intent?): Long? {
+        if (!started) return null
         cancelStartupScan()
         startupScanGate = startupScanGate.nextUiEntry()
         diagnostics.event(
@@ -128,11 +166,13 @@ class UsbSessionCoordinator(context: Context) {
 
     /** A new Intent for the same Activity does not re-arm or start a startup scan. */
     fun onActivityNewIntent(intent: Intent?) {
+        if (!started) return
         handleAttachIntent(intent)
     }
 
     /** Cancels only the startup callback that belongs to the destroyed UI entry. */
     fun onActivityDestroyed(uiEntryGeneration: Long) {
+        if (!started) return
         if (startupScanGate.uiEntryGeneration != uiEntryGeneration) return
         cancelStartupScan()
         diagnostics.event(
@@ -172,6 +212,7 @@ class UsbSessionCoordinator(context: Context) {
     }
 
     private fun runStartupScan() {
+        if (!started) return
         val descriptors = currentUsbDevices().map(AndroidUsbDescriptorMapper::map)
         val candidate = UsbSessionLifecyclePolicy.selectStartupCandidate(currentPhase(), descriptors)
         if (candidate == null) {
@@ -211,6 +252,7 @@ class UsbSessionCoordinator(context: Context) {
     }
 
     private fun requestAccess(candidate: Candidate, automatic: Boolean) {
+        if (!started) return
         val device = findCurrentDevice(candidate.device)
         if (device == null) {
             diagnostics.event("WARN", "USB_CANDIDATE_DISAPPEARED", candidate.summary())
@@ -363,6 +405,7 @@ class UsbSessionCoordinator(context: Context) {
     }
 
     private fun runModeSwitchTick() {
+        if (!started) return
         val watch = modeSwitchWatch ?: return
         val result = UsbSessionLifecyclePolicy.tickModeSwitch(
             watch = watch,

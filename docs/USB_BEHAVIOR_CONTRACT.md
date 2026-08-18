@@ -62,9 +62,17 @@ app entry is allowed to activate the Application-scoped coordinator; descriptor,
 permission, endpoint, reconnect, and later transport state remain coordinator
 responsibilities once activated.
 
-Stage 6A3A freezes this entry-session contract only. Android persistence/UI and
-coordinator activation/deactivation are wired in the following stage. Until that
-wiring and real-device evidence exist, hardware status remains `NOT YET VERIFIED`.
+Stage 6A3B wires this boundary into Android. The Application creates the
+coordinator inactive; an authorized UI entry activates it, and ordinary
+non-configuration exit deactivates it while no operation-owned lease exists. A
+pre-authorization attach payload is consumed without descriptor processing and is
+replaced by the normal `350 ms` startup enumeration after authorization.
+
+Deactivation cancels startup and mode-switch callbacks plus permission timeouts,
+clears pending permission/current descriptor state, and unregisters the dynamic
+permission/detach receivers. These are lifecycle controls only; candidate and
+permission-result policies are unchanged. Real-device behavior remains
+`NOT YET VERIFIED`.
 
 ## Descriptor discovery
 

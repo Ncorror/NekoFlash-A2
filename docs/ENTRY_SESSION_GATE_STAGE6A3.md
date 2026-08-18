@@ -37,9 +37,9 @@ NekoFlash USB processing while the entry session is still unauthorized.
 - ending the entry session revokes only volatile authorization;
 - changing the risk schema requires a new durable acknowledgement.
 
-USB activation is not part of Stage 6A3A yet. The next wiring stage must ensure
-that no coordinator scan, permission request, attach processing, reconnect, or
-mode-switch automation occurs before `EntrySessionGate` is authorized.
+Stage 6A3B wires this boundary into Android. `NekoFlashApplication` owns the gate
+and creates the coordinator without activating it. `MainActivity` starts USB
+automation only after the gate authorizes the current entry.
 
 ## File-access change
 
@@ -60,8 +60,8 @@ separate documented decision.
 ## UI/process lifetime
 
 Application-scoped USB ownership remains mandatory, but ownership and activity
-are different concepts. A future authorized UI entry may activate the
-coordinator without moving USB state into `MainActivity`.
+are different concepts. An authorized UI entry activates the coordinator without
+moving USB descriptor, permission, reconnect, or transport state into `MainActivity`.
 
 Configuration recreation may preserve the entry session. Ordinary
 non-configuration UI exit ends it. While A2 has no real `OperationCoordinator`
@@ -79,18 +79,39 @@ Stage 6A3A (this patch):
 - deterministic entry-session regression tests;
 - no Android gate UI and no runtime coordinator behavior change yet.
 
-Stage 6A3B (only after 6A3A CI is green):
+Stage 6A3B:
 
 - SharedPreferences persistence adapter;
 - RU/EN Compose entry screen;
 - gate-before-USB handling in `MainActivity`;
 - coordinator start only after authorization;
 - coordinator stop/cleanup on ordinary session exit;
-- pre-gate attach normalization followed by safe startup enumeration.
+- pre-gate attach normalization followed by safe startup enumeration;
+- same-process re-entry regression coverage for the volatile gate.
+
+### Android lifecycle wiring
+
+A fresh unauthorized Activity does not start the coordinator and does not forward
+USB attach Intents. If the user authorizes the entry, the coordinator starts and
+any attach payload that arrived before authorization is marked consumed without
+reading its device extra. `onActivityCreated` then takes the normal consumed-intent
+path and schedules the existing `350 ms` startup enumeration.
+
+While the session is authorized, configuration recreation keeps both the volatile
+gate and coordinator active; the replacement Activity receives a fresh UI-entry
+generation. Ordinary non-configuration destruction ends the gate and stops the
+coordinator. Because no protocol transport exists yet, stop cancels startup and
+mode-switch callbacks, cancels permission timeouts, clears pending permission and
+current descriptor state, and unregisters both dynamic receivers.
+
+The coordinator also ignores Activity callbacks, startup ticks, mode-switch ticks,
+and access requests while inactive. This is a fail-closed entry boundary, not a
+new USB candidate or permission-result rule.
 
 ## Verification status
 
-Stage 6A3A can prove only the pure entry-session contract. It cannot prove
-Android lifecycle delivery or real USB behavior.
+Stage 6A3B can be verified by pure regression tests plus Android compile/lint/build.
+It still cannot prove OEM USB delivery, permission dialogs, attach normalization,
+or real re-enumeration.
 
 A2 hardware status remains **NOT YET VERIFIED**.

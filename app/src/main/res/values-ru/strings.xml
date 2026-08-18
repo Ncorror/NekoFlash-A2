@@ -15,4 +15,10 @@
     <string name="usb_disconnected">Отключено</string>
     <string name="operation_none">Нет</string>
     <string name="value_unknown">Неизвестно</string>
+    <string name="entry_heading">Перед продолжением</string>
+    <string name="entry_description">USB и операции с устройством не запускаются до подтверждения.</string>
+    <string name="entry_risk_acknowledgement">Подтверждаю риски прошивки и изменения устройства</string>
+    <string name="entry_continue">Продолжить</string>
+    <string name="entry_risk_required">Подтвердите риски перед продолжением.</string>
+    <string name="entry_acknowledgement_save_failed">Не удалось сохранить подтверждение рисков. Повторите попытку.</string>
 </resources>
