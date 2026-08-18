@@ -132,7 +132,7 @@ object UsbSessionLifecyclePolicy {
             modeSwitchWatch = if (isCurrent) {
                 ModeSwitchWatch(
                     previousLogicalSignature = current.logicalSignature,
-                    previousVendorId = current.device.vendorId ?: detached.vendorId,
+                    previousVendorId = current.device.vendorId,
                 )
             } else {
                 null
