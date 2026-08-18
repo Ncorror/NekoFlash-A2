@@ -9,7 +9,8 @@ Legacy baseline commit: `c49242c771dac9d147597c0d07e9ac1c6d320254`.
 
 - `UsbDeviceInspector.kt` - descriptor classification, candidate priority,
   re-enumeration filtering, and candidate rebinding.
-- `MainActivity.kt` - USB permission request/result and detach orchestration.
+- `MainActivity.kt` - attach intent handling, USB permission request/result,
+  startup enumeration, detach handling, and mode-switch polling.
 - `DeviceViewModel.kt` - serialized transport transitions and fail-closed shutdown.
 - `UsbTransportShutdownPolicy.kt` - final close predicate.
 - `UsbSessionSnapshot.kt` - descriptor evidence captured for diagnostics.
@@ -37,22 +38,41 @@ interfaces are ignored. Otherwise canonical Fastboot wins over compatible and
 generic matches. A generic descriptor match is only a candidate; Fastboot
 handshake must still confirm the peer.
 
-## Attachment identity and re-enumeration
+## Attachment identity and candidate rebinding
 
 The stable candidate key contains Android `deviceName`, VID, PID, mode, and
 interface index. The logical USB signature intentionally excludes Android
 `deviceName`/`deviceId` and contains VID, PID, mode, interface class/subclass/
 protocol, and selected endpoint addresses.
 
-A mode-switch scan ignores the previous logical signature. When the previous
-vendor is known, the scan keeps the same VID. Automatic mode-switch selection is
-performed only when exactly one changed candidate remains; ambiguity is not
-resolved by guessing.
-
 After a USB permission callback, a previously selected candidate may be rebound
 to a fresh Android descriptor only when `deviceName` still matches. Rebinding
 prefers the same interface index, then the same logical signature, then a unique
-candidate with the same mode and match kind.
+candidate with the same mode and match kind. If rebinding fails, the callback
+descriptor is inspected again and its current primary candidate is used.
+
+## Attach and startup enumeration behavior
+
+Legacy `MainActivity` receives `USB_DEVICE_ATTACHED` as an Activity intent. The
+same intent is marked consumed so Activity recreation does not process the same
+attach payload twice. A consumed attach intent falls through to the normal
+startup enumeration path instead of being treated as a second attach event.
+
+A startup enumeration is scheduled once per legacy Activity instance after
+`350 ms`. When it runs, automatic connection is allowed only while connection
+state is `NONE` or `ERROR`, and only when discovery returns exactly one candidate.
+Zero candidates and ambiguous multi-candidate results do not auto-connect.
+
+For a non-null attached device, legacy cancels any pending startup enumeration
+and stops any active mode-switch watch before classifying the new descriptor.
+This happens even if the descriptor is not recognized as ADB/Fastboot. A system
+attach callback with no device does not cancel those schedulers and does not
+request USB permission.
+
+A2 must preserve the externally observable single-processing and conservative
+auto-connect behavior without making an Activity the USB owner. The later
+Android adapter may replace the consumed-Intent implementation detail, but UI
+recreation must not duplicate a physical attach event.
 
 ## USB permission behavior
 
@@ -88,7 +108,30 @@ When a permission timeout fires, only the pending entry for that exact requested
 If permission became granted without the callback, the timeout error is
 suppressed, but legacy does not implicitly connect from the timeout path.
 
-## Detach and transport shutdown
+## Detach and mode-switch behavior
+
+A detach always removes pending permission state for the exact detached
+`deviceId`.
+
+The detached descriptor is considered the current device when either:
+
+- `deviceName` equals the current device name; or
+- `deviceId`, VID, and PID all equal the current device values.
+
+An unrelated detach does not disconnect the current transport and does not start
+re-enumeration tracking.
+
+A detach matching the current device requests transport disconnect and starts a
+mode-switch watch for both ADB and Fastboot sessions. The watch remembers the
+previous logical signature and previous VID. It performs up to `16` scans, with
+the first and each subsequent scan separated by `750 ms`.
+
+A mode-switch scan rejects the previous logical signature and, when the previous
+VID is known, rejects other vendors. Automatic reconnection occurs only when
+exactly one changed candidate remains. A successful match ends the watch. A miss
+consumes one attempt; after the sixteenth miss no further scan is scheduled.
+
+## Transport shutdown
 
 Transport generations are serialized. Duplicate connect requests for the same
 stable candidate are ignored while that candidate is connecting or connected.
@@ -124,13 +167,10 @@ implementation.
 Stage 5A implements pure USB descriptors and candidate discovery/re-enumeration
 selection. Stage 5B implements pure fail-closed shutdown predicates.
 
-Stage 5C1 adds pure USB permission bookkeeping and callback resolution. It still
-does not register a receiver, create a `PendingIntent`, call
-`UsbManager.requestPermission`, open a USB device, claim an interface, perform a
-protocol handshake, or own JNI/native transfers.
-
-Stage 5C2 will pin startup enumeration, attach/detach decisions, and mode-switch
-watch timing before Android USB ownership is introduced.
+Stage 5C adds pure permission bookkeeping plus startup, attach, detach, and
+mode-switch lifecycle decisions. It still does not register a receiver, create a
+`PendingIntent`, call `UsbManager.requestPermission`, open a USB device, claim an
+interface, perform a protocol handshake, or own JNI/native transfers.
 
 The later `UsbSessionCoordinator` will be the sole owner of Android USB discovery,
 permission, interfaces/endpoints, attach/detach, reconnect, and transport
