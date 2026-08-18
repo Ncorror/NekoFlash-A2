@@ -2,6 +2,7 @@ package io.github.ncorror.nekoflash.usb.diagnostics
 
 import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FilterOutputStream
 import java.io.OutputStream
 import java.time.Instant
 import java.time.ZoneOffset
@@ -29,23 +30,30 @@ class UsbDiagnosticsZipExporter(
     ): Result {
         val sourceFiles = exportableFiles()
         val sourceBytes = sourceFiles.sumOf(File::length)
-        val zip = ZipOutputStream(BufferedOutputStream(output))
-
-        writeTextEntry(
-            zip = zip,
-            name = MANIFEST_NAME,
-            content = manifestText(sourceFiles, sourceBytes, exportedAtEpochMs),
-        )
-        sourceFiles.forEach { file ->
-            writeFileEntry(zip, file)
+        ZipOutputStream(
+            BufferedOutputStream(NonClosingOutputStream(output)),
+        ).use { zip ->
+            writeTextEntry(
+                zip = zip,
+                name = MANIFEST_NAME,
+                content = manifestText(sourceFiles, sourceBytes, exportedAtEpochMs),
+            )
+            sourceFiles.forEach { file ->
+                writeFileEntry(zip, file)
+            }
         }
-        zip.finish()
-        zip.flush()
+        output.flush()
 
         return Result(
             sourceFileCount = sourceFiles.size,
             sourceBytes = sourceBytes,
         )
+    }
+
+    private class NonClosingOutputStream(output: OutputStream) : FilterOutputStream(output) {
+        override fun close() {
+            flush()
+        }
     }
 
     private fun exportableFiles(): List<File> =

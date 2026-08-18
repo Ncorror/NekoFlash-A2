@@ -77,6 +77,20 @@ class UsbDiagnosticsZipExporterTest {
         )
     }
 
+    @Test
+    fun `archive leaves caller owned output stream open`() = withRunDirectory { directory ->
+        directory.resolve("usb-events.txt").writeText("events")
+        val output = CloseTrackingOutputStream()
+
+        UsbDiagnosticsZipExporter(directory).writeArchive(output, exportedAtEpochMs = 0L)
+
+        assertFalse(output.closed)
+        assertEquals(
+            "events",
+            unzip(output.toByteArray()).getValue("usb-events.txt").toString(Charsets.UTF_8),
+        )
+    }
+
     private class CloseTrackingOutputStream : ByteArrayOutputStream() {
         var closed = false
             private set
