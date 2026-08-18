@@ -51,8 +51,11 @@ Required USB-facing behavior:
 - Android may already have granted host access as part of a matching attach
   launch; that platform grant never substitutes for NekoFlash entry authorization
   and must not activate coordinator processing before the gate completes;
-- configuration recreation may preserve the authorized session, while an
-  ordinary non-configuration UI exit revokes it;
+- configuration recreation may preserve the authorized session;
+- authorized root Back/Home-style backgrounding preserves the authorized session, matching
+  legacy `moveTaskToBack(true)` behavior rather than treating backgrounding as an
+  entry exit;
+- ordinary non-configuration destruction/removal of the UI entry revokes it;
 - until an explicit operation-owned lifecycle exists, ending that authorized UI
   entry also stops coordinator automatic callbacks/timers rather than leaving
   USB automation alive only because the process survived.
@@ -70,9 +73,10 @@ replaced by the normal `350 ms` startup enumeration after authorization.
 
 Deactivation cancels startup and mode-switch callbacks plus permission timeouts,
 clears pending permission/current descriptor state, and unregisters the dynamic
-permission/detach receivers. These are lifecycle controls only; candidate and
-permission-result policies are unchanged. Real-device behavior remains
-`NOT YET VERIFIED`.
+permission/detach receivers. Stage 6A3C additionally restores explicit legacy
+authorized root-Back backgrounding on all supported Android versions. These are lifecycle
+controls only; candidate and permission-result policies are unchanged. Real-device
+behavior remains `NOT YET VERIFIED`.
 
 ## Descriptor discovery
 
@@ -148,12 +152,20 @@ matching the legacy create/new-intent distinction.
 
 Permission callbacks and detach events use separate receiver responsibilities.
 
-The permission receiver listens only to the app-owned package-specific USB
+The permission receiver listens only to the active app-owned package-specific USB
 permission action. On API 33+ it is registered `RECEIVER_NOT_EXPORTED`. On API
 26-32 A2 retains the pinned legacy dynamic-registration behavior behind a narrowly
 scoped lint suppression; the permission PendingIntent itself remains package-
 scoped. Tightening the pre-33 delivery mechanism further is a separate hardware-
 sensitive platform migration.
+
+The callback action is unique to both the current coordinator process and its
+activation generation. This prevents a result belonging to a stopped permission
+lease from being interpreted by a later lease after the dynamic receiver is
+registered again. The identity hardening changes only cross-lease delivery; once
+a callback matches the current lease, the pinned permission-result policy below
+is unchanged. Receiver startup is transactional, so a partial registration is
+rolled back before a start failure escapes.
 
 The detach receiver listens only to `UsbManager.ACTION_USB_DEVICE_DETACHED`.
 Because this is a protected Android system broadcast, the system-only receiver

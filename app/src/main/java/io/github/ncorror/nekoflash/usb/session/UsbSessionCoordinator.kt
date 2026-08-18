@@ -17,6 +17,7 @@ import io.github.ncorror.nekoflash.usb.diagnostics.UsbSessionSnapshot
 import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector.Candidate
 import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector.Mode
 import io.github.ncorror.nekoflash.usb.model.UsbDeviceDescriptor
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -31,11 +32,17 @@ class UsbSessionCoordinator(context: Context) {
     private val usbManager = appContext.getSystemService(Context.USB_SERVICE) as UsbManager
     private val handler = Handler(Looper.getMainLooper())
     private val diagnostics = UsbDiagnosticStore(appContext)
-    private val permissionAction = "${appContext.packageName}.USB_PERMISSION"
+    private val permissionCallbackIdentity = UsbPermissionCallbackIdentity(
+        actionPrefix = "${appContext.packageName}.USB_PERMISSION",
+        processToken = UUID.randomUUID().toString(),
+    )
     private val permissionTimeouts = mutableMapOf<Int, Runnable>()
     private val sessionSequence = AtomicLong(0L)
 
     private var started = false
+    private var activePermissionCallback: UsbPermissionCallbackIdentity.Callback? = null
+    private var permissionReceiverRegistered = false
+    private var detachReceiverRegistered = false
     private var startupScanGate = UsbSessionLifecyclePolicy.StartupScanGate()
     private var permissionRegistry = UsbPermissionPolicy.Registry()
     private var currentCandidate: Candidate? = null
@@ -47,7 +54,8 @@ class UsbSessionCoordinator(context: Context) {
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (!started) return
-            if (intent?.action == permissionAction) {
+            val expectedAction = activePermissionCallback?.action ?: return
+            if (intent?.action == expectedAction) {
                 handlePermissionResult(intent)
             }
         }
@@ -69,10 +77,31 @@ class UsbSessionCoordinator(context: Context) {
 
     fun start() {
         if (started) return
-        registerPermissionReceiver()
-        registerDetachReceiver()
-        started = true
-        diagnostics.event("INFO", "USB_COORDINATOR_STARTED")
+
+        val callback = permissionCallbackIdentity.nextCallback()
+        activePermissionCallback = callback
+        try {
+            registerPermissionReceiver(callback.action)
+            permissionReceiverRegistered = true
+            registerDetachReceiver()
+            detachReceiverRegistered = true
+            started = true
+            diagnostics.event(
+                "INFO",
+                "USB_COORDINATOR_STARTED",
+                "permissionLease=${callback.generation}",
+            )
+        } catch (error: RuntimeException) {
+            started = false
+            unregisterReceiversSafely()
+            activePermissionCallback = null
+            diagnostics.event(
+                "ERROR",
+                "USB_COORDINATOR_START_FAILED",
+                "permissionLease=${callback.generation} error=${error.javaClass.simpleName}",
+            )
+            throw error
+        }
     }
 
     /**
@@ -88,12 +117,42 @@ class UsbSessionCoordinator(context: Context) {
         permissionTimeouts.clear()
         permissionRegistry = UsbPermissionPolicy.Registry()
         currentCandidate = null
-        appContext.unregisterReceiver(permissionReceiver)
-        appContext.unregisterReceiver(detachReceiver)
-        diagnostics.event("INFO", "USB_COORDINATOR_STOPPED")
+        val endedPermissionLease = activePermissionCallback?.generation
+        activePermissionCallback = null
+        unregisterReceiversSafely()
+        diagnostics.event(
+            "INFO",
+            "USB_COORDINATOR_STOPPED",
+            "permissionLease=${endedPermissionLease ?: "none"}",
+        )
     }
 
-    private fun registerPermissionReceiver() {
+    private fun unregisterReceiversSafely() {
+        if (permissionReceiverRegistered) {
+            permissionReceiverRegistered = false
+            runCatching { appContext.unregisterReceiver(permissionReceiver) }
+                .onFailure { error ->
+                    diagnostics.event(
+                        "WARN",
+                        "USB_PERMISSION_RECEIVER_UNREGISTER_FAILED",
+                        error.javaClass.simpleName,
+                    )
+                }
+        }
+        if (detachReceiverRegistered) {
+            detachReceiverRegistered = false
+            runCatching { appContext.unregisterReceiver(detachReceiver) }
+                .onFailure { error ->
+                    diagnostics.event(
+                        "WARN",
+                        "USB_DETACH_RECEIVER_UNREGISTER_FAILED",
+                        error.javaClass.simpleName,
+                    )
+                }
+        }
+    }
+
+    private fun registerPermissionReceiver(permissionAction: String) {
         val filter = IntentFilter(permissionAction)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             appContext.registerReceiver(
@@ -253,6 +312,7 @@ class UsbSessionCoordinator(context: Context) {
 
     private fun requestAccess(candidate: Candidate, automatic: Boolean) {
         if (!started) return
+        val permissionAction = activePermissionCallback?.action ?: return
         val device = findCurrentDevice(candidate.device)
         if (device == null) {
             diagnostics.event("WARN", "USB_CANDIDATE_DISAPPEARED", candidate.summary())

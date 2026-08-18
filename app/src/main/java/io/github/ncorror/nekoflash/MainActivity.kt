@@ -3,6 +3,7 @@ package io.github.ncorror.nekoflash
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
@@ -27,10 +28,20 @@ class MainActivity : ComponentActivity() {
 
     private var usbUiEntryGeneration: Long? = null
 
+    private val authorizedRootBackCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            // Pinned legacy MainActivity behavior: Back on the authorized root UI
+            // backgrounds the task and keeps the entry session alive.
+            moveTaskToBack(true)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val authorizedAtCreate = entrySessionGate.isSessionAuthorized()
+        authorizedRootBackCallback.isEnabled = authorizedAtCreate
+        onBackPressedDispatcher.addCallback(this, authorizedRootBackCallback)
         if (authorizedAtCreate) {
             usbSessionCoordinator.start()
             usbUiEntryGeneration = usbSessionCoordinator.onActivityCreated(intent)
@@ -59,6 +70,7 @@ class MainActivity : ComponentActivity() {
                                 usbUiEntryGeneration =
                                     usbSessionCoordinator.onEntryAuthorized(intent)
                                 errorResId = null
+                                authorizedRootBackCallback.isEnabled = true
                                 authorized = true
                             } else {
                                 errorResId = if (riskAccepted) {

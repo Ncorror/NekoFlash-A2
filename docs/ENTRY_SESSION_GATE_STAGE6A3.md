@@ -63,11 +63,13 @@ Application-scoped USB ownership remains mandatory, but ownership and activity
 are different concepts. An authorized UI entry activates the coordinator without
 moving USB descriptor, permission, reconnect, or transport state into `MainActivity`.
 
-Configuration recreation may preserve the entry session. Ordinary
-non-configuration UI exit ends it. While A2 has no real `OperationCoordinator`
-or active transport lease, that exit must also stop coordinator automation.
-When long-running operations are later implemented, only an explicit
-operation-owned lifecycle may keep USB active after UI exit.
+Configuration recreation may preserve the entry session. Authorized root Back/Home-style
+backgrounding also preserves it, matching the pinned legacy behavior that moved
+the root task to the background instead of finishing `MainActivity`. Ordinary
+non-configuration destruction/removal of that UI entry ends it. While A2 has no
+real `OperationCoordinator` or active transport lease, that end must also stop
+coordinator automation. When long-running operations are later implemented, only
+an explicit operation-owned lifecycle may keep USB active after UI entry ends.
 
 ## Stage split
 
@@ -89,6 +91,17 @@ Stage 6A3B:
 - pre-gate attach normalization followed by safe startup enumeration;
 - same-process re-entry regression coverage for the volatile gate.
 
+Stage 6A3C:
+
+- restores the pinned authorized root-Back behavior explicitly on every supported
+  Android version: Back backgrounds the root task and does not revoke the entry session;
+- isolates each USB-permission callback channel by process token plus coordinator
+  activation generation, so a callback created by an ended lease cannot be
+  accepted by a later lease;
+- makes receiver registration transactional: partial registration is rolled back
+  before a start failure is propagated;
+- keeps the existing in-lease `UsbPermissionPolicy` semantics unchanged.
+
 ### Android lifecycle wiring
 
 A fresh unauthorized Activity does not start the coordinator and does not forward
@@ -99,10 +112,28 @@ path and schedules the existing `350 ms` startup enumeration.
 
 While the session is authorized, configuration recreation keeps both the volatile
 gate and coordinator active; the replacement Activity receives a fresh UI-entry
-generation. Ordinary non-configuration destruction ends the gate and stops the
-coordinator. Because no protocol transport exists yet, stop cancels startup and
-mode-switch callbacks, cancels permission timeouts, clears pending permission and
-current descriptor state, and unregisters both dynamic receivers.
+generation. Authorized root Back is explicitly handled as the legacy Home-style
+background operation and therefore does not end that session. Before authorization,
+the entry screen keeps the platform-default Back behavior. Ordinary non-configuration
+destruction/removal ends the gate and stops the coordinator. Because no protocol
+transport exists yet, stop cancels startup and mode-switch callbacks, cancels
+permission timeouts, clears pending permission and current descriptor state, and
+unregisters both dynamic receivers.
+
+Each coordinator activation uses a distinct app-owned permission callback action.
+The action contains a process-unique token plus an increasing activation
+generation. Android `PendingIntent` identity does not use Intent extras, so the
+lease identity is deliberately carried in the action itself. A permission result
+created by an older entry/process therefore cannot match the permission receiver
+registered by a newer activation. Within one activation, deviceId request codes,
+30-second timeout handling, same-name callback fallback, rebind, and granted/
+denied interpretation remain unchanged.
+
+Receiver activation is also transactional. If the second receiver registration
+fails after the first succeeded, the first registration is removed before the
+framework exception is rethrown. Stop marks the coordinator inactive before
+cleanup; stale queued callbacks remain fail-closed even if unregister itself
+reports an Android framework error.
 
 The coordinator also ignores Activity callbacks, startup ticks, mode-switch ticks,
 and access requests while inactive. This is a fail-closed entry boundary, not a
@@ -110,8 +141,9 @@ new USB candidate or permission-result rule.
 
 ## Verification status
 
-Stage 6A3B can be verified by pure regression tests plus Android compile/lint/build.
-It still cannot prove OEM USB delivery, permission dialogs, attach normalization,
-or real re-enumeration.
+Stage 6A3C adds deterministic regression coverage for callback-action lease
+identity. Root-Back dispatch, receiver registration rollback, OEM USB delivery,
+permission dialogs, attach normalization, and real re-enumeration still require
+Android/runtime or hardware evidence beyond JVM tests.
 
 A2 hardware status remains **NOT YET VERIFIED**.
