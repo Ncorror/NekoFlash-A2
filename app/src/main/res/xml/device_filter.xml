@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Attach delivery only. Protocol classification remains in UsbInterfaceSelector. -->
+    <usb-device class="255" />
+</resources>
