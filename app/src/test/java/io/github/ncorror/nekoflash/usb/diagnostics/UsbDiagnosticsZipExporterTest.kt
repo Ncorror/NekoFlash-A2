@@ -77,6 +77,16 @@ class UsbDiagnosticsZipExporterTest {
         )
     }
 
+    private class CloseTrackingOutputStream : ByteArrayOutputStream() {
+        var closed = false
+            private set
+
+        override fun close() {
+            closed = true
+            super.close()
+        }
+    }
+
     private fun <T> withRunDirectory(block: (java.io.File) -> T): T {
         val directory = Files.createTempDirectory("nekoflash-usb-diagnostics").toFile()
         return try {

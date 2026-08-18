@@ -21,4 +21,9 @@
     <string name="entry_continue">Продолжить</string>
     <string name="entry_risk_required">Подтвердите риски перед продолжением.</string>
     <string name="entry_acknowledgement_save_failed">Не удалось сохранить подтверждение рисков. Повторите попытку.</string>
+    <string name="diagnostics_export_button">Сохранить ZIP диагностики</string>
+    <string name="diagnostics_export_saving">Сохранение ZIP диагностики…</string>
+    <string name="diagnostics_export_saved">ZIP диагностики сохранён (файлов доказательств: %1$d).</string>
+    <string name="diagnostics_export_failed">Не удалось сохранить ZIP диагностики. Выбранный файл может быть неполным.</string>
+    <string name="diagnostics_export_session_ended">Сеанс входа завершился до сохранения диагностики. Войдите в NekoFlash снова и повторите экспорт.</string>
 </resources>

@@ -21,4 +21,9 @@
     <string name="entry_continue">Continue</string>
     <string name="entry_risk_required">Confirm the device-modification risks before continuing.</string>
     <string name="entry_acknowledgement_save_failed">Could not save the risk acknowledgement. Try again.</string>
+    <string name="diagnostics_export_button">Save diagnostics ZIP</string>
+    <string name="diagnostics_export_saving">Saving diagnostics ZIP…</string>
+    <string name="diagnostics_export_saved">Diagnostics ZIP saved (%1$d evidence files).</string>
+    <string name="diagnostics_export_failed">Could not save diagnostics ZIP. The selected file may be incomplete.</string>
+    <string name="diagnostics_export_session_ended">The entry session ended before diagnostics could be saved. Re-enter NekoFlash and export again.</string>
 </resources>

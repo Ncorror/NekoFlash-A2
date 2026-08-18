@@ -13,10 +13,12 @@ import android.os.Handler
 import android.os.Looper
 import io.github.ncorror.nekoflash.usb.android.AndroidUsbDescriptorMapper
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbDiagnosticStore
+import io.github.ncorror.nekoflash.usb.diagnostics.UsbDiagnosticsZipExporter
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbSessionSnapshot
 import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector.Candidate
 import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector.Mode
 import io.github.ncorror.nekoflash.usb.model.UsbDeviceDescriptor
+import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -257,6 +259,12 @@ class UsbSessionCoordinator(context: Context) {
     }
 
     fun diagnosticsDirectoryPath(): String = diagnostics.directoryPath()
+
+    fun suggestedDiagnosticsArchiveFileName(): String =
+        UsbDiagnosticsZipExporter.suggestedFileName()
+
+    fun exportDiagnosticsArchive(output: OutputStream): UsbDiagnosticsZipExporter.Result =
+        diagnostics.exportArchive(output)
 
     private fun scheduleStartupScan() {
         val decision = UsbSessionLifecyclePolicy.scheduleStartupScan(startupScanGate)

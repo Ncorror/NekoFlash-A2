@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -32,6 +33,9 @@ private data class HomeStatusItem(
 @Composable
 fun HomeScreen(
     state: HomeUiState,
+    diagnosticsExportInProgress: Boolean,
+    diagnosticsExportMessage: String?,
+    onExportDiagnostics: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val unknown = stringResource(R.string.value_unknown)
@@ -95,6 +99,28 @@ fun HomeScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            OutlinedButton(
+                onClick = onExportDiagnostics,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !diagnosticsExportInProgress,
+            ) {
+                Text(
+                    text = stringResource(
+                        if (diagnosticsExportInProgress) {
+                            R.string.diagnostics_export_saving
+                        } else {
+                            R.string.diagnostics_export_button
+                        },
+                    ),
+                )
+            }
+            if (diagnosticsExportMessage != null) {
+                Text(
+                    text = diagnosticsExportMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = NekoFlashSpacing.statusCardMinWidth),
                 modifier = Modifier
