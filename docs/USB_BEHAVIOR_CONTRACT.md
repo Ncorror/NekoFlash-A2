@@ -54,17 +54,39 @@ to a fresh Android descriptor only when `deviceName` still matches. Rebinding
 prefers the same interface index, then the same logical signature, then a unique
 candidate with the same mode and match kind.
 
-## Permission behavior to preserve in the Android adapter
+## USB permission behavior
 
-The current legacy flow requests USB permission only when `UsbManager` does not
-already report permission. Pending requests are keyed by Android `deviceId`,
-with a `deviceName` fallback when the permission broadcast returns a fresh device
-object. The permission callback descriptor is re-inspected/rebound before the
-transport is opened.
+A permission request is tracked before checking `UsbManager.hasPermission`.
+Pending requests are keyed by Android `deviceId`. If permission is already
+granted, the just-added pending entry is removed and the selected candidate is
+connected immediately without scheduling a permission timeout.
 
-A denied permission result clears the pending request. A request with no response
-is treated as timed out after 30 seconds. These framework rules are documented
-here but are intentionally not implemented in the pure Stage 5A selector.
+If permission is not already granted, the legacy flow requests it and starts a
+`30_000 ms` timeout. Replacing a request for the same `deviceId` replaces that
+pending value without changing the insertion order used by fallback lookup.
+
+On a permission broadcast:
+
+- the timeout keyed by the callback device's `deviceId` is cancelled first;
+- denied permission removes a matching pending request when a device is present
+  and never connects;
+- a granted result without a device is an error and leaves pending state intact;
+- pending lookup prefers exact `deviceId`, then the first pending request whose
+  original `deviceName` equals the callback device name;
+- a granted callback rebinds/re-inspects the callback descriptor before connect;
+- if no pending request matches, a recognized callback device is treated as an
+  automatic connection candidate.
+
+The callback-id timeout rule is intentionally exact. When an OEM returns a fresh
+object with a different `deviceId`, legacy can resolve the candidate by
+`deviceName` while only cancelling the timeout keyed by the callback id. A2 must
+not silently broaden that behavior without separate evidence and regression
+coverage.
+
+When a permission timeout fires, only the pending entry for that exact requested
+`deviceId` is removed. If permission is still absent, the timeout is reported.
+If permission became granted without the callback, the timeout error is
+suppressed, but legacy does not implicitly connect from the timeout path.
 
 ## Detach and transport shutdown
 
@@ -97,15 +119,18 @@ payloads, Recovery/Sideload transitions, and return to normal ADB. Those results
 are evidence for behavior that A2 must preserve; they do not validate the new A2
 implementation.
 
-## A2 Stage 5A boundary
+## A2 Stage 5 boundary
 
-Stage 5A pins the full legacy USB contract in this document and implements only
-pure descriptors plus candidate selection/re-enumeration policy and regression
-tests. It does not open a USB device, request permission, claim interfaces,
-perform protocol handshakes, or own JNI/native transfers.
+Stage 5A implements pure USB descriptors and candidate discovery/re-enumeration
+selection. Stage 5B implements pure fail-closed shutdown predicates.
 
-Stage 5B will add the pure fail-closed shutdown predicates before Android USB
-ownership is introduced.
+Stage 5C1 adds pure USB permission bookkeeping and callback resolution. It still
+does not register a receiver, create a `PendingIntent`, call
+`UsbManager.requestPermission`, open a USB device, claim an interface, perform a
+protocol handshake, or own JNI/native transfers.
+
+Stage 5C2 will pin startup enumeration, attach/detach decisions, and mode-switch
+watch timing before Android USB ownership is introduced.
 
 The later `UsbSessionCoordinator` will be the sole owner of Android USB discovery,
 permission, interfaces/endpoints, attach/detach, reconnect, and transport
