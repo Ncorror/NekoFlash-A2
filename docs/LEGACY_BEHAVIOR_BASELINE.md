@@ -124,8 +124,31 @@ That approval does not waive the protected behavior list above. Each change must
 - remain `NOT YET VERIFIED` for hardware-sensitive USB behavior until real
   device evidence exists.
 
-State that was accidentally lost only because a legacy Activity was destroyed
-may remain alive in the A2 Application-scoped coordinator. This is not permission
-to add retries, recovery, protocol guesses, new device restrictions, or new
-flashing/unlock behavior. Any change outside this narrow Android platform
-boundary still requires separate explicit approval.
+State may survive configuration-driven Activity recreation when that is required
+by the A2 Application-scoped ownership model. Final non-configuration UI exit is
+not automatically equivalent to an unlimited process-lifetime USB lease. This is
+not permission to add retries, recovery, protocol guesses, new device
+restrictions, or new flashing/unlock behavior. Any change outside this narrow
+Android platform boundary still requires separate explicit approval.
+
+## Approved entry-session / file-access split
+
+The legacy onboarding established two different concerns at one screen: a
+process/task-scoped risk-entry session and mandatory broad file access. A2 has
+explicit approval to separate them.
+
+Protected entry behavior for A2:
+
+- a new process/full entry is not authorized merely because risk acceptance was
+  persisted earlier;
+- the current risk schema may remain acknowledged between entries;
+- the user must explicitly authorize each new entry before automatic USB work;
+- a pre-authorization USB attach is not processed as a device session; after
+  entry authorization A2 performs the normal conservative startup enumeration;
+- ending the ordinary non-configuration UI entry revokes the volatile session.
+
+Broad shared-storage permission is no longer part of this entry invariant.
+File access is migrated later with the actual file workflows and must use the
+least privilege that preserves their proven semantics. `MANAGE_EXTERNAL_STORAGE`
+is not inherited automatically from legacy merely because it used to gate app
+entry.

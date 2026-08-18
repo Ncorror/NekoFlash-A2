@@ -113,6 +113,56 @@ Hardware validation:
 - если современный framework-механизм конфликтует с hardware-proven behavior,
   сохраняется hardware-proven behavior до отдельной подтвержденной миграции.
 
+## Третья явная поправка: entry session отдельно от file access
+
+Для A2 явно разрешено отделить обязательное подтверждение рисков и авторизацию
+текущего входа в приложение от legacy-требования широкого доступа к shared storage.
+
+Сохраняется обязательный entry invariant:
+
+- новый process/full app entry всегда начинается без session authorization;
+- подтверждение текущей версии рисков может храниться между запусками, но само
+  по себе никогда не авторизует новый process session;
+- перед входом пользователь должен снова явно продолжить с отмеченным
+  подтверждением рисков;
+- до session authorization A2 не имеет права запускать USB discovery,
+  `requestPermission`, auto-connect, reconnect или mode-switch automation;
+- USB attach, пришедший до authorization, может только привести пользователя к
+  entry gate; после authorization используется обычная безопасная startup
+  enumeration, а не повторное выполнение устаревшего attach payload;
+- окончание обычного non-configuration UI entry отзывает session authorization.
+
+Application-scoped ownership не означает бесконечную фоновую USB-активность.
+Пока `OperationCoordinator`/operation lease еще не реализован, окончание
+авторизованного UI entry должно также прекращать coordinator-owned automatic USB
+callbacks/timers. Позже активная операция сможет удерживать USB lifetime только
+явным operation-owned lease, а не случайным временем жизни Activity или process.
+
+Отдельно меняется legacy file-access gate:
+
+- broad shared-storage permission больше не является условием входа в A2;
+- file access запрашивается только в конкретном file workflow, когда он реально
+  нужен для выбранного образа/ZIP/APK/экспорта;
+- использовать наименьший достаточный Android storage API; user-selected access
+  предпочтительнее broad access, если он сохраняет требуемую file/transfer
+  семантику;
+- точный storage transport для больших flashing/sideload payloads выбирается
+  только после отдельной характеристики legacy file workflows;
+- `MANAGE_EXTERNAL_STORAGE` нельзя добавлять в A2 автоматически. Если broad/direct
+  path access окажется действительно необходим core workflow, это отдельное
+  явное решение с причиной, риском, regression coverage и device validation.
+
+Эта поправка не разрешает менять USB candidate/permission-result semantics,
+ADB/Fastboot/Sideload/Mi Unlock wire behavior, retry/recovery rules или
+destructive behavior. Она меняет только границу входа и момент выдачи file access.
+
+Требуемый порядок миграции:
+
+```text
+entry-session contract -> CI -> Android gate wiring -> CI -> diagnostics export
+-> safe hardware USB validation -> file-workflow characterization -> file access
+```
+
 ---
 
 ## Одноразовая Android identity migration для A2

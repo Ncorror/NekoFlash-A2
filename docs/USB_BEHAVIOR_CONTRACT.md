@@ -32,6 +32,40 @@ selection, permission-result interpretation, mode-switch filtering, retry counts
 timing contracts, or transport/destructive semantics without the normal
 behavior-change process.
 
+## Entry authorization boundary
+
+The approved A2 entry/file-access split keeps the legacy risk/session boundary
+but removes broad storage access as a prerequisite for entering the application.
+
+Required USB-facing behavior:
+
+- a fresh process/full app entry starts with no volatile entry authorization;
+- persisted acknowledgement of the current risk schema does not by itself enable
+  USB processing;
+- no startup scan, attach processing, USB permission request, auto-connect,
+  reconnect, or mode-switch automation may begin before entry authorization;
+- an attach delivered before authorization is treated only as a reason to show
+  the entry gate. After authorization the original attach payload is not replayed;
+  the coordinator uses the normal `350 ms` startup enumeration against the
+  descriptors that are actually present then;
+- Android may already have granted host access as part of a matching attach
+  launch; that platform grant never substitutes for NekoFlash entry authorization
+  and must not activate coordinator processing before the gate completes;
+- configuration recreation may preserve the authorized session, while an
+  ordinary non-configuration UI exit revokes it;
+- until an explicit operation-owned lifecycle exists, ending that authorized UI
+  entry also stops coordinator automatic callbacks/timers rather than leaving
+  USB automation alive only because the process survived.
+
+These rules do not make UI the USB owner. The gate decides whether the current
+app entry is allowed to activate the Application-scoped coordinator; descriptor,
+permission, endpoint, reconnect, and later transport state remain coordinator
+responsibilities once activated.
+
+Stage 6A3A freezes this entry-session contract only. Android persistence/UI and
+coordinator activation/deactivation are wired in the following stage. Until that
+wiring and real-device evidence exist, hardware status remains `NOT YET VERIFIED`.
+
 ## Descriptor discovery
 
 Every ADB/Fastboot candidate requires a bulk IN endpoint and a bulk OUT endpoint.
