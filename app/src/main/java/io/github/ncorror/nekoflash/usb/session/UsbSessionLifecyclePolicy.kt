@@ -23,8 +23,18 @@ object UsbSessionLifecyclePolicy {
         ERROR,
     }
 
+    data class StartupScanGate(
+        val uiEntryGeneration: Long = 0L,
+        val markedScheduled: Boolean = false,
+    ) {
+        fun nextUiEntry(): StartupScanGate = copy(
+            uiEntryGeneration = uiEntryGeneration + 1L,
+            markedScheduled = false,
+        )
+    }
+
     data class StartupScheduleDecision(
-        val startupScanMarkedScheduled: Boolean,
+        val gate: StartupScanGate,
         val delayMs: Long?,
     )
 
@@ -55,18 +65,18 @@ object UsbSessionLifecyclePolicy {
     )
 
     /**
-     * Startup enumeration preserves the legacy one-shot gate. Once marked
-     * scheduled, another request is ignored until the caller resets the gate.
+     * Startup enumeration is one-shot within one UI-entry generation. A new
+     * Activity creation re-arms the gate without moving USB ownership into UI.
      */
-    fun scheduleStartupScan(alreadyScheduled: Boolean): StartupScheduleDecision =
-        if (alreadyScheduled) {
+    fun scheduleStartupScan(gate: StartupScanGate): StartupScheduleDecision =
+        if (gate.markedScheduled) {
             StartupScheduleDecision(
-                startupScanMarkedScheduled = true,
+                gate = gate,
                 delayMs = null,
             )
         } else {
             StartupScheduleDecision(
-                startupScanMarkedScheduled = true,
+                gate = gate.copy(markedScheduled = true),
                 delayMs = STARTUP_SCAN_DELAY_MS,
             )
         }

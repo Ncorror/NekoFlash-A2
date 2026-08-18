@@ -19,6 +19,19 @@ Legacy baseline commit: `c49242c771dac9d147597c0d07e9ac1c6d320254`.
 
 The legacy files are behavioral evidence, not an ownership template for A2.
 
+## Android platform integration boundary
+
+The A2 master prompt explicitly permits controlled modernization of Android
+framework integration while keeping the USB/device invariants below protected.
+Receiver export mechanics, PendingIntent scoping, and UI-to-Application
+lifecycle plumbing are implementation mechanisms, not protocol semantics.
+
+Any modernization that can affect real USB delivery or re-enumeration remains
+`NOT YET VERIFIED` until hardware evidence exists. It must not change candidate
+selection, permission-result interpretation, mode-switch filtering, retry counts,
+timing contracts, or transport/destructive semantics without the normal
+behavior-change process.
+
 ## Descriptor discovery
 
 Every ADB/Fastboot candidate requires a bulk IN endpoint and a bulk OUT endpoint.
@@ -59,9 +72,22 @@ attach payload twice. A consumed attach intent falls through to the normal
 startup enumeration path instead of being treated as a second attach event.
 
 A startup enumeration is scheduled once per legacy Activity instance after
-`350 ms`. When it runs, automatic connection is allowed only while connection
+`350 ms`. A2 represents that one-shot boundary as a coordinator-owned UI-entry
+generation. Each `MainActivity.onCreate` re-arms only the startup-scan gate;
+`onNewIntent` for the same Activity does not re-arm or start that fallback scan.
+Destroying that Activity cancels only its still-pending startup callback, using
+the UI-entry generation token so stale destruction cannot cancel a replacement
+Activity's scan.
+
+Permission registry, current USB generation, and mode-switch state remain owned
+by the Application-scoped coordinator rather than being copied back into UI.
+When the startup scan runs, automatic connection is allowed only while connection
 state is `NONE` or `ERROR`, and only when discovery returns exactly one candidate.
-Zero candidates and ambiguous multi-candidate results do not auto-connect.
+Zero candidates and ambiguous multi-candidate results do not auto-connect. If a
+new UI-entry startup scan finds a unique candidate while an older coordinator-
+owned mode-switch watch is active, that startup candidate supersedes the watch
+before permission is requested so the two schedulers cannot issue duplicate
+connect attempts.
 
 For a non-null attached device, legacy cancels any pending startup enumeration
 and stops any active mode-switch watch before classifying the new descriptor.
@@ -70,9 +96,28 @@ attach callback with no device does not cancel those schedulers and does not
 request USB permission.
 
 A2 must preserve the externally observable single-processing and conservative
-auto-connect behavior without making an Activity the USB owner. The later
-Android adapter may replace the consumed-Intent implementation detail, but UI
-recreation must not duplicate a physical attach event.
+auto-connect behavior without making an Activity the USB owner. The Android
+adapter may replace the consumed-Intent implementation detail, but UI recreation
+must not duplicate a physical attach event. A consumed attach payload falls back
+to startup enumeration only when encountered during a new Activity creation,
+matching the legacy create/new-intent distinction.
+
+## Android receiver delivery
+
+Permission callbacks and detach events use separate receiver responsibilities.
+
+The permission receiver listens only to the app-owned package-specific USB
+permission action. On API 33+ it is registered `RECEIVER_NOT_EXPORTED`. On API
+26-32 A2 retains the pinned legacy dynamic-registration behavior behind a narrowly
+scoped lint suppression; the permission PendingIntent itself remains package-
+scoped. Tightening the pre-33 delivery mechanism further is a separate hardware-
+sensitive platform migration.
+
+The detach receiver listens only to `UsbManager.ACTION_USB_DEVICE_DETACHED`.
+Because this is a protected Android system broadcast, the system-only receiver
+uses the platform system-broadcast registration path without an exported/not-
+exported flag. The two actions are not mixed in one filter because they have
+different Android sender/export semantics.
 
 ## USB permission behavior
 

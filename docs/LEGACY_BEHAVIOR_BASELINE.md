@@ -103,3 +103,29 @@ and maintainability.
 Legacy architectural debt must not be copied merely to preserve behavior.
 Pure protocol rules should be characterized first, then expressed through clean
 A2 APIs before they are connected to Android or USB transports.
+
+
+## Android platform integration amendment
+
+The protected baseline distinguishes proven device/protocol behavior from the
+Android framework mechanism that happened to deliver that behavior.
+
+A2 has standing approval to modernize only receiver registration/export
+semantics, PendingIntent/component scoping, target-SDK compatibility, and
+UI-to-Application lifecycle plumbing when required by current Android platform
+semantics or by the mandated Application-scoped ownership model.
+
+That approval does not waive the protected behavior list above. Each change must:
+
+- state the legacy mechanism and the invariant being preserved;
+- state the platform reason and any observable lifecycle difference;
+- document risk and deterministic regression coverage where possible;
+- keep protocol and destructive semantics unchanged;
+- remain `NOT YET VERIFIED` for hardware-sensitive USB behavior until real
+  device evidence exists.
+
+State that was accidentally lost only because a legacy Activity was destroyed
+may remain alive in the A2 Application-scoped coordinator. This is not permission
+to add retries, recovery, protocol guesses, new device restrictions, or new
+flashing/unlock behavior. Any change outside this narrow Android platform
+boundary still requires separate explicit approval.

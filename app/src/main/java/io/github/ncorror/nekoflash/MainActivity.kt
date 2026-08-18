@@ -13,9 +13,11 @@ class MainActivity : ComponentActivity() {
     private val usbSessionCoordinator
         get() = (application as NekoFlashApplication).usbSessionCoordinator
 
+    private var usbUiEntryGeneration: Long? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        usbSessionCoordinator.onActivityIntent(intent)
+        usbUiEntryGeneration = usbSessionCoordinator.onActivityCreated(intent)
         enableEdgeToEdge()
         setContent {
             NekoFlashTheme {
@@ -27,6 +29,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        usbSessionCoordinator.onActivityIntent(intent)
+        usbSessionCoordinator.onActivityNewIntent(intent)
+    }
+
+    override fun onDestroy() {
+        usbUiEntryGeneration?.let { usbSessionCoordinator.onActivityDestroyed(it) }
+        usbUiEntryGeneration = null
+        super.onDestroy()
     }
 }

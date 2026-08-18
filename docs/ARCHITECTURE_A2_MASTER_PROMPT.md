@@ -57,6 +57,62 @@
 - Mi Unlock flow;
 - destructive operation behavior.
 
+## Вторая явная поправка: controlled Android platform integration
+
+Legacy NekoFlash остается executable specification для доказанного поведения
+устройства и протоколов, но не является обязательным шаблоном устаревших
+Android framework-механизмов или случайной привязки framework state к Activity.
+
+Эта поправка является постоянным узким разрешением модернизировать только Android
+platform integration, когда это необходимо для поддерживаемых Android API,
+target/compile SDK compatibility, platform security semantics или обязательного
+Application-scoped ownership A2:
+
+- registration/export semantics системных и app-owned receivers;
+- PendingIntent и component/package scoping;
+- совместимость с актуальными Android framework API;
+- перенос framework state из Activity в обязательный Application-scoped owner;
+- lifecycle plumbing, не меняющий device/protocol/destructive invariants.
+
+Это разрешение НЕ распространяется на:
+
+- USB descriptor/candidate selection rules;
+- USB permission-result semantics;
+- ADB/Fastboot/Sideload/Mi Unlock wire behavior;
+- новые retry/recovery механизмы;
+- новые device/vendor guesses;
+- новые flashing/unlock сценарии;
+- destructive operation behavior.
+
+Каждая такая platform modernization должна явно фиксировать:
+
+```text
+Legacy mechanism:
+Invariant preserved:
+Platform reason:
+Observable difference:
+Risk:
+Regression coverage:
+Hardware validation:
+```
+
+Правила применения:
+
+- official Android documentation и AOSP могут быть source of truth только для
+  Android framework/API semantics;
+- если modernization может повлиять на реальный USB attach/detach, permission
+  delivery, reconnect или re-enumeration, статус остается `NOT YET VERIFIED`
+  до hardware evidence;
+- platform security hardening может только сужать доступ к app-owned framework
+  boundary и не может вводить новые device/protocol restrictions;
+- state, случайно терявшийся только из-за уничтожения legacy Activity, может
+  оставаться у Application-scoped owner, если не меняются protected protocol
+  semantics и не добавляются новые retry/recovery правила;
+- изменение, выходящее за перечисленную platform boundary, по-прежнему требует
+  отдельного явного согласования;
+- если современный framework-механизм конфликтует с hardware-proven behavior,
+  сохраняется hardware-proven behavior до отдельной подтвержденной миграции.
+
 ---
 
 ## Одноразовая Android identity migration для A2
@@ -133,6 +189,13 @@ source package: io.github.ncorror.nekoflash
 Причина:
 
 Новая защита может изменить проверенное поведение.
+
+Вторая явная поправка про controlled Android platform integration не разрешает
+новые device/protocol защиты. Framework-required receiver export/package
+scoping внутри перечисленной там platform boundary считается уже согласованной
+модернизацией только при сохранении protected invariants и обязательной записи
+platform-change record. Всё, что меняет device/protocol поведение, остаётся под
+обычным правилом ниже.
 
 Любое изменение:
 

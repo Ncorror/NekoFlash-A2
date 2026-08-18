@@ -16,15 +16,31 @@ import org.junit.Test
 class UsbSessionLifecyclePolicyTest {
     @Test
     fun `startup scan is scheduled once after legacy delay`() {
-        val first = UsbSessionLifecyclePolicy.scheduleStartupScan(alreadyScheduled = false)
-        val second = UsbSessionLifecyclePolicy.scheduleStartupScan(
-            alreadyScheduled = first.startupScanMarkedScheduled,
-        )
+        val gate = UsbSessionLifecyclePolicy.StartupScanGate().nextUiEntry()
+        val first = UsbSessionLifecyclePolicy.scheduleStartupScan(gate)
+        val second = UsbSessionLifecyclePolicy.scheduleStartupScan(first.gate)
 
-        assertTrue(first.startupScanMarkedScheduled)
+        assertTrue(first.gate.markedScheduled)
         assertEquals(350L, first.delayMs)
-        assertTrue(second.startupScanMarkedScheduled)
+        assertTrue(second.gate.markedScheduled)
         assertNull(second.delayMs)
+    }
+
+    @Test
+    fun `new ui entry re-arms startup scan without reusing previous one-shot gate`() {
+        val firstEntryGate = UsbSessionLifecyclePolicy.StartupScanGate().nextUiEntry()
+        val firstEntry = UsbSessionLifecyclePolicy.scheduleStartupScan(firstEntryGate)
+        val duplicateInSameEntry = UsbSessionLifecyclePolicy.scheduleStartupScan(firstEntry.gate)
+
+        val secondEntryGate = duplicateInSameEntry.gate.nextUiEntry()
+        val secondEntry = UsbSessionLifecyclePolicy.scheduleStartupScan(secondEntryGate)
+
+        assertEquals(1L, firstEntry.gate.uiEntryGeneration)
+        assertEquals(350L, firstEntry.delayMs)
+        assertNull(duplicateInSameEntry.delayMs)
+        assertEquals(2L, secondEntry.gate.uiEntryGeneration)
+        assertTrue(secondEntry.gate.markedScheduled)
+        assertEquals(350L, secondEntry.delayMs)
     }
 
     @Test

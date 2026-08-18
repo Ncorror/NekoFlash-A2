@@ -1,5 +1,6 @@
 package io.github.ncorror.nekoflash.usb.session
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -35,7 +36,7 @@ class UsbSessionCoordinator(context: Context) {
     private val sessionSequence = AtomicLong(0L)
 
     private var started = false
-    private var startupScanMarkedScheduled = false
+    private var startupScanGate = UsbSessionLifecyclePolicy.StartupScanGate()
     private var permissionRegistry = UsbPermissionPolicy.Registry()
     private var currentCandidate: Candidate? = null
     private var modeSwitchWatch: UsbSessionLifecyclePolicy.ModeSwitchWatch? = null
@@ -43,17 +44,22 @@ class UsbSessionCoordinator(context: Context) {
     private val startupRunnable = Runnable { runStartupScan() }
     private val modeSwitchRunnable = Runnable { runModeSwitchTick() }
 
-    private val receiver = object : BroadcastReceiver() {
+    private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
-                permissionAction -> handlePermissionResult(intent)
-                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    val device = intent.usbDeviceExtra()
-                    if (device == null) {
-                        diagnostics.event("WARN", "USB_DETACHED_MISSING_DEVICE")
-                    } else {
-                        handleDetached(device)
-                    }
+            if (intent?.action == permissionAction) {
+                handlePermissionResult(intent)
+            }
+        }
+    }
+
+    private val detachReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
+                val device = intent.usbDeviceExtra()
+                if (device == null) {
+                    diagnostics.event("WARN", "USB_DETACHED_MISSING_DEVICE")
+                } else {
+                    handleDetached(device)
                 }
             }
         }
@@ -62,44 +68,100 @@ class UsbSessionCoordinator(context: Context) {
     fun start() {
         if (started) return
         started = true
-        val filter = IntentFilter().apply {
-            addAction(permissionAction)
-            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            appContext.registerReceiver(receiver, filter)
-        }
+        registerPermissionReceiver()
+        registerDetachReceiver()
         diagnostics.event("INFO", "USB_COORDINATOR_STARTED")
     }
 
-    /** Called by the launcher Activity only to forward Android's attach launch Intent. */
-    fun onActivityIntent(intent: Intent?) {
-        if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) {
-            scheduleStartupScan()
-            return
+    private fun registerPermissionReceiver() {
+        val filter = IntentFilter(permissionAction)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(
+                permissionReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED,
+            )
+        } else {
+            registerLegacyPermissionReceiver(filter)
         }
-        if (intent.getBooleanExtra(EXTRA_USB_INTENT_CONSUMED, false)) {
-            scheduleStartupScan()
-            return
-        }
+    }
+
+    /**
+     * API 26-32 keeps the pinned dynamic-receiver behavior. The permission
+     * PendingIntent is package-scoped; changing this legacy delivery mechanism
+     * further requires its own hardware-validated platform migration.
+     */
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    @Suppress("DEPRECATION")
+    private fun registerLegacyPermissionReceiver(filter: IntentFilter) {
+        appContext.registerReceiver(permissionReceiver, filter)
+    }
+
+    /**
+     * USB_DEVICE_DETACHED is a protected system broadcast, so this system-only
+     * receiver intentionally uses the platform registration path without an
+     * exported/not-exported flag.
+     */
+    private fun registerDetachReceiver() {
+        appContext.registerReceiver(
+            detachReceiver,
+            IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED),
+        )
+    }
+
+    /**
+     * A new Activity instance starts a new legacy-equivalent startup-scan entry.
+     * The returned generation is only a lifecycle token; USB state remains here.
+     */
+    fun onActivityCreated(intent: Intent?): Long {
+        cancelStartupScan()
+        startupScanGate = startupScanGate.nextUiEntry()
+        diagnostics.event(
+            "INFO",
+            "USB_UI_ENTRY_STARTED",
+            "generation=${startupScanGate.uiEntryGeneration}",
+        )
+        val attachHandled = handleAttachIntent(intent)
+        if (!attachHandled) scheduleStartupScan()
+        return startupScanGate.uiEntryGeneration
+    }
+
+    /** A new Intent for the same Activity does not re-arm or start a startup scan. */
+    fun onActivityNewIntent(intent: Intent?) {
+        handleAttachIntent(intent)
+    }
+
+    /** Cancels only the startup callback that belongs to the destroyed UI entry. */
+    fun onActivityDestroyed(uiEntryGeneration: Long) {
+        if (startupScanGate.uiEntryGeneration != uiEntryGeneration) return
+        cancelStartupScan()
+        diagnostics.event(
+            "INFO",
+            "USB_UI_ENTRY_ENDED",
+            "generation=$uiEntryGeneration",
+        )
+    }
+
+    /** Mirrors legacy handleAutoUsbIntent: true means this attach payload was consumed. */
+    private fun handleAttachIntent(intent: Intent?): Boolean {
+        if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return false
+        if (intent.getBooleanExtra(EXTRA_USB_INTENT_CONSUMED, false)) return false
 
         val device = intent.usbDeviceExtra()
         intent.putExtra(EXTRA_USB_INTENT_CONSUMED, true)
         if (device == null) {
             diagnostics.event("WARN", "USB_ATTACHED_MISSING_DEVICE")
-            return
+            return true
         }
         handleAttached(device)
+        return true
     }
 
     fun diagnosticsDirectoryPath(): String = diagnostics.directoryPath()
 
     private fun scheduleStartupScan() {
-        val decision = UsbSessionLifecyclePolicy.scheduleStartupScan(startupScanMarkedScheduled)
-        startupScanMarkedScheduled = decision.startupScanMarkedScheduled
+        val decision = UsbSessionLifecyclePolicy.scheduleStartupScan(startupScanGate)
+        startupScanGate = decision.gate
         val delayMs = decision.delayMs ?: return
         diagnostics.event("INFO", "USB_STARTUP_SCAN_SCHEDULED", "delayMs=$delayMs")
         handler.postDelayed(startupRunnable, delayMs)
@@ -117,6 +179,14 @@ class UsbSessionCoordinator(context: Context) {
             return
         }
         diagnostics.event("INFO", "USB_STARTUP_CANDIDATE", candidate.summary())
+        if (modeSwitchWatch != null) {
+            diagnostics.event(
+                "INFO",
+                "USB_STARTUP_CANDIDATE_SUPERSEDES_MODE_SWITCH_WATCH",
+                "generation=${startupScanGate.uiEntryGeneration}",
+            )
+            stopModeSwitchWatch()
+        }
         requestAccess(candidate, automatic = true)
     }
 
