@@ -7,7 +7,7 @@ Termux is the Git/GitHub client for NekoFlash-A2. Android builds are produced by
 ```bash
 pkg update -y
 pkg upgrade -y
-pkg install git gh openssh -y
+pkg install git gh openssh zip -y
 ```
 
 Do not install Android Studio, Android SDK, a local Gradle toolchain, emulator, desktop adb, or desktop fastboot for this workflow.
@@ -76,6 +76,46 @@ gpush
 ```
 
 Do not use `git add .` for migration stages. Stage the exact reviewed files.
+
+## Recovery bundle for interrupted chats
+
+The repository checkpoint records the meaning of the current migration state, while Git records history.
+Do not hard-code the current repository HEAD into the checkpoint merely to make a chat backup; that creates recursive documentation-only commits.
+
+For chat continuity, use the tracked `scripts/recovery-bundle` helper. It creates one ZIP outside the repository and never stages, commits, pushes, or edits project files.
+
+Create a recovery bundle only from a clean, synchronized checkout. After a meaningful stage has been committed, pushed, and its evidence has been reviewed, run:
+
+```bash
+cd ~/NekoFlash-A2
+./scripts/recovery-bundle
+```
+
+If the reviewed CI report or hardware diagnostics should travel with the recovery snapshot, pass them explicitly:
+
+```bash
+./scripts/recovery-bundle \
+  ~/storage/downloads/NekoFlash-<commit>-reports.zip \
+  ~/storage/downloads/NekoFlash-A2-diagnostics-<timestamp>.zip
+```
+
+Only files explicitly named on the command line are copied as extra evidence. GitHub credentials, `.git`, ignored files, untracked files, and the Termux environment are not copied.
+
+The generated ZIP is written to `~/storage/downloads` by default and contains:
+
+- an exact `git archive` snapshot of the committed HEAD;
+- `PROJECT_STATE.txt` with repository, branch, HEAD, checkpoint identity, and hashes;
+- recent Git history and current Git status;
+- GitHub Actions metadata for the exact HEAD and recent runs;
+- `CHAT_RECOVERY_PROMPT.md` with the mandatory restore order for a new chat;
+- `SHA256SUMS.txt` covering every file inside the recovery bundle;
+- any explicitly supplied evidence files.
+
+The helper refuses to create an official recovery bundle when the working tree is dirty or when local HEAD differs from `origin/<current-branch>`.
+This keeps every recovery ZIP tied to a reproducible Git state rather than an accidental local edit.
+
+When a chat is interrupted, upload the newest recovery ZIP first. The new chat must follow `CHAT_RECOVERY_PROMPT.md` and reconstruct the project state before proposing or changing code.
+The recovery ZIP is a convenience backup, not a replacement for Git history, permanent behavior contracts, CI artifacts, or hardware evidence.
 
 ## GitHub Actions
 

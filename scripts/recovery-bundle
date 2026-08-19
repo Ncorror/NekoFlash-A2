@@ -1,0 +1,240 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+set -euo pipefail
+
+EXPECTED_REPO="Ncorror/NekoFlash-A2"
+OUTPUT_DIR="${NEKOFLASH_RECOVERY_DIR:-$HOME/storage/downloads}"
+CHECKPOINT="docs/DEVELOPMENT_CHECKPOINT_TEMPORARY.md"
+MASTER_PROMPT="docs/ARCHITECTURE_A2_MASTER_PROMPT.md"
+
+fail() {
+    echo "Error: $*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  ./scripts/recovery-bundle [evidence-file ...]
+
+Creates one recovery ZIP outside the repository containing:
+- an exact git archive of the current committed source;
+- current Git/GitHub/CI metadata;
+- a generated chat-recovery prompt;
+- SHA-256 hashes for every bundled file;
+- any evidence files explicitly passed on the command line.
+
+The command requires a clean working tree and local HEAD == origin/current-branch.
+It never modifies, stages, commits, or pushes repository files.
+USAGE
+}
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+for cmd in git gh zip sha256sum find sort; do
+    command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is not installed"
+done
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "not inside a Git repository"
+git rev-parse --verify HEAD >/dev/null 2>&1 || fail "repository has no commits"
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+origin_url="$(git remote get-url origin 2>/dev/null || true)"
+case "$origin_url" in
+    "https://github.com/$EXPECTED_REPO"|"https://github.com/$EXPECTED_REPO.git"|"git@github.com:$EXPECTED_REPO.git")
+        ;;
+    *)
+        fail "unexpected origin: ${origin_url:-<missing>} (expected $EXPECTED_REPO)"
+        ;;
+esac
+
+branch="$(git branch --show-current)"
+[ -n "$branch" ] || fail "detached HEAD"
+
+if [ -n "$(git status --porcelain)" ]; then
+    echo "Recovery bundles are stable checkpoints, so the working tree must be clean." >&2
+    git status --short --branch >&2
+    fail "commit or restore local changes before creating a recovery bundle"
+fi
+
+[ -f "$CHECKPOINT" ] || fail "missing $CHECKPOINT"
+[ -f "$MASTER_PROMPT" ] || fail "missing $MASTER_PROMPT"
+
+for evidence in "$@"; do
+    [ -f "$evidence" ] || fail "evidence file not found: $evidence"
+done
+
+echo "== Verify GitHub authentication =="
+gh auth status --active --hostname github.com >/dev/null 2>&1 || fail "GitHub CLI authentication is missing or invalid"
+
+echo "== Verify local/remote identity =="
+git fetch origin
+remote_ref="refs/remotes/origin/$branch"
+git show-ref --verify --quiet "$remote_ref" || fail "origin/$branch does not exist"
+
+head_sha="$(git rev-parse HEAD)"
+remote_sha="$(git rev-parse "origin/$branch")"
+[ "$head_sha" = "$remote_sha" ] || {
+    echo "LOCAL : $head_sha" >&2
+    echo "REMOTE: $remote_sha" >&2
+    fail "local HEAD and origin/$branch differ; synchronize before creating a recovery bundle"
+}
+
+short_sha="$(git rev-parse --short=12 HEAD)"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+checkpoint_commit="$(git log -1 --format=%H -- "$CHECKPOINT")"
+checkpoint_sha="$(sha256sum "$CHECKPOINT" | awk '{print $1}')"
+master_prompt_sha="$(sha256sum "$MASTER_PROMPT" | awk '{print $1}')"
+
+mkdir -p "$OUTPUT_DIR"
+work_dir="$(mktemp -d)"
+cleanup() {
+    rm -rf "$work_dir"
+}
+trap cleanup EXIT
+
+mkdir -p "$work_dir/source" "$work_dir/state" "$work_dir/ci" "$work_dir/evidence"
+
+source_archive="NekoFlash-A2-${head_sha}.zip"
+
+echo "== Create exact committed source snapshot =="
+git archive \
+    --format=zip \
+    --prefix="NekoFlash-A2-${short_sha}/" \
+    --output="$work_dir/source/$source_archive" \
+    "$head_sha"
+
+cat > "$work_dir/state/PROJECT_STATE.txt" <<STATE
+NekoFlash A2 recovery bundle
+Generated UTC: $timestamp
+Repository: $EXPECTED_REPO
+Origin: $origin_url
+Branch: $branch
+HEAD: $head_sha
+origin/$branch: $remote_sha
+Working tree: CLEAN
+Checkpoint file: $CHECKPOINT
+Checkpoint last-change commit: $checkpoint_commit
+Checkpoint SHA-256: $checkpoint_sha
+Master prompt file: $MASTER_PROMPT
+Master prompt SHA-256: $master_prompt_sha
+Source archive: source/$source_archive
+
+Evidence boundary:
+- Git/CI metadata in this bundle describes the exact HEAD above.
+- Hardware PASS claims remain valid only for the exact campaigns recorded in project evidence.
+- The bundle itself is a recovery aid, not a replacement for Git history, permanent contracts, CI artifacts, or hardware evidence.
+STATE
+
+git status --short --branch > "$work_dir/state/git-status.txt"
+git log --decorate --date=iso-strict --pretty=format:'%H%x09%ad%x09%d%x09%s' -30 > "$work_dir/state/git-log-30.txt"
+git show --stat --summary --format=fuller HEAD > "$work_dir/state/head-commit.txt"
+
+printf '%s\n' "$origin_url" > "$work_dir/state/origin-url.txt"
+printf '%s\n' "$head_sha" > "$work_dir/state/head-sha.txt"
+printf '%s\n' "$remote_sha" > "$work_dir/state/origin-branch-sha.txt"
+
+cat > "$work_dir/CHAT_RECOVERY_PROMPT.md" <<'PROMPT'
+# NekoFlash A2 chat recovery procedure
+
+This ZIP is a development-context backup. Do not treat chat memory as authoritative.
+Do not modify code until the project state has been reconstructed and conflicts, if any, are resolved.
+
+Restore in this order:
+
+1. Read `state/PROJECT_STATE.txt` and `state/git-log-30.txt`.
+2. Open the source ZIP under `source/`.
+3. In that source snapshot read, in this order:
+   - `docs/ARCHITECTURE_A2_MASTER_PROMPT.md`;
+   - permanent behavior contracts relevant to the current stage, especially
+     `docs/LEGACY_BEHAVIOR_BASELINE.md` and `docs/USB_BEHAVIOR_CONTRACT.md`;
+   - `docs/DEVELOPMENT_CHECKPOINT_TEMPORARY.md`;
+   - the stage-specific contract named by the checkpoint.
+4. Inspect `ci/current-head.json`, `ci/current-head.txt`, and any files under `evidence/`.
+5. Verify the live GitHub repository before relying on the snapshot as current:
+   - identify current `main` HEAD without assuming it equals the bundled HEAD;
+   - inspect every commit newer than the bundled HEAD, if any;
+   - verify CI status for the relevant exact commit;
+   - do not upgrade CI or hardware evidence vocabulary beyond what artifacts prove.
+6. If the live repository, permanent contracts, checkpoint, or evidence disagree, stop and report the conflict before changing code.
+
+Before continuing development, report these items explicitly:
+
+- bundled HEAD and current live HEAD;
+- latest reviewed CI evidence and its exact commit;
+- completed stage;
+- next stage;
+- current ADB/Fastboot/destructive-operation implementation boundary;
+- current hardware evidence boundary;
+- open blockers or contradictions;
+- exact files/contracts that govern the next change.
+
+The legacy NekoFlash repository remains the executable behavioral specification at the pinned baseline recorded in the project documents. Do not invent behavior from memory.
+PROMPT
+
+echo "== Capture GitHub Actions metadata =="
+gh run list \
+    --commit "$head_sha" \
+    --limit 10 \
+    --json databaseId,number,displayTitle,workflowName,status,conclusion,headSha,createdAt,updatedAt,url \
+    > "$work_dir/ci/current-head.json"
+
+gh run list \
+    --commit "$head_sha" \
+    --limit 10 \
+    > "$work_dir/ci/current-head.txt"
+
+gh run list \
+    --limit 10 \
+    --json databaseId,number,displayTitle,workflowName,status,conclusion,headSha,createdAt,updatedAt,url \
+    > "$work_dir/ci/recent.json"
+
+if [ "$#" -gt 0 ]; then
+    echo "== Add explicitly supplied evidence =="
+    for evidence in "$@"; do
+        base="$(basename "$evidence")"
+        dest="$work_dir/evidence/$base"
+        [ ! -e "$dest" ] || fail "duplicate evidence basename: $base"
+        cp -p "$evidence" "$dest"
+        echo "Included evidence: $evidence"
+    done
+else
+    rmdir "$work_dir/evidence"
+fi
+
+echo "== Build SHA-256 manifest =="
+(
+    cd "$work_dir"
+    while IFS= read -r -d '' file; do
+        sha256sum "${file#./}"
+    done < <(find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z)
+) > "$work_dir/SHA256SUMS.txt"
+
+bundle="$OUTPUT_DIR/NekoFlash-A2-recovery-${timestamp}-${short_sha}.zip"
+rm -f "$bundle"
+
+(
+    cd "$work_dir"
+    zip -q -r "$bundle" .
+)
+
+bundle_sha="$(sha256sum "$bundle" | awk '{print $1}')"
+
+cat <<RESULT
+
+==========================================
+NEKOFLASH RECOVERY BUNDLE CREATED
+==========================================
+Bundle: $bundle
+SHA-256: $bundle_sha
+HEAD: $head_sha
+Branch: $branch
+Working tree: CLEAN
+
+To restore a future chat, upload this one ZIP first and instruct the assistant to follow CHAT_RECOVERY_PROMPT.md before changing code.
+RESULT
