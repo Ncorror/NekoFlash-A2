@@ -21,14 +21,14 @@ Canonical repository:
 
 `https://github.com/Ncorror/NekoFlash-A2`
 
-Latest reviewed A2 evidence commit:
+Latest reviewed A2 implementation/evidence commit:
 
-`8518204b88c1252ab34c2bc2d581f8678af54205`
-`add temporary development checkpoint`
+`828d6dab289d5c7715e15d604a50fa17af73bcff`
+`wire Stage 6A5B USB observation and manual refresh`
 
-Its parent `55d1ff7629cf446ef5294fd689d5061b72e7f390` contains the executable
-Stage 6A5A implementation. Commit `8518204b88c1252ab34c2bc2d581f8678af54205`
-changes only this temporary checkpoint document, so the executable code is unchanged.
+This exact commit contains the executable Stage 6A5B implementation that was
+reviewed in CI and on real hardware. A later documentation-only checkpoint commit
+does not change that executable evidence boundary.
 
 Do not hard-code the commit that contains the current revision of this checkpoint.
 Resolve it from Git when resuming:
@@ -36,19 +36,19 @@ Resolve it from Git when resuming:
 `git log -1 --format=%H -- docs/DEVELOPMENT_CHECKPOINT_TEMPORARY.md`
 
 Also verify the repository HEAD with `git rev-parse HEAD` and inspect every commit
-after the latest reviewed evidence commit before continuing development.
+after the latest reviewed implementation/evidence commit before continuing development.
 
 Current completed implementation stage:
 
-**6A5A — pure USB observation/manual-scan contract — CI-VERIFIED**
+**6A5B — Android USB observation wiring — CI-VERIFIED / HARDWARE-VERIFIED**
 
 Next implementation stage:
 
-**6A5B — Android USB observation wiring — NOT STARTED**
+**6B — ADB transport, read-only bring-up first — NOT STARTED**
 
 Current transport boundary:
 
-- USB descriptor/discovery/lifecycle layer exists;
+- USB descriptor/discovery/lifecycle and UI observation/manual Refresh exist;
 - `CANDIDATE_READY` is not a protocol connection;
 - ADB transport: **NOT IMPLEMENTED**;
 - Fastboot transport: **NOT IMPLEMENTED**;
@@ -56,19 +56,29 @@ Current transport boundary:
 
 Latest reviewed CI evidence:
 
-- GitHub Actions run: Android CI #27;
-- exact commit: `8518204b88c1252ab34c2bc2d581f8678af54205`;
-- reports artifact:
-  `NekoFlash-8518204b88c1252ab34c2bc2d581f8678af54205-reports`;
-- reports artifact SHA-256:
-  `216c1e386314c76483e2682c325436000b269b071018493b830f5e5b677994ef`;
-- 112/112 unit tests passed;
+- Android CI #33 / run ID `32290292423`;
+- exact commit: `828d6dab289d5c7715e15d604a50fa17af73bcff`;
+- 120/120 unit tests passed;
 - failures/errors/skipped: 0/0/0;
-- Kotlin compiler warnings observed in the captured unit-test build log: 0;
-- lint: 0 errors / 4 warnings;
-- `testDebugUnitTest`: success;
-- `lintDebug`: success;
-- `assembleDebug`: success.
+- Kotlin compiler warnings observed in captured logs: 0;
+- lint: 0 errors / 4 known baseline warnings;
+- `testDebugUnitTest`, `lintDebug`, and `assembleDebug`: success.
+
+Latest reviewed Stage 6A5B hardware evidence:
+
+- diagnostics: `NekoFlash-A2-diagnostics-20260819-193354Z.zip`;
+- exact-run debug APK SHA-256:
+  `ca29e88473da9c9d8b3636435588b06a7fb75caafd52045dfad54a492e308f14`;
+- Home observation, explicit Refresh, Activity recreation continuity, matching
+  detach clearing, reattach, descriptor parity, and the unopened transport
+  boundary: **PASS** for the Stage 6A5B scope.
+
+Exact CI artifact digests and local evidence hashes are recorded in sections 5 and 9
+and in `docs/USB_OBSERVATION_STAGE6A5.md`.
+
+Hardware PASS is limited to the Stage 6A5B observation/manual-rescan/lifecycle
+invariants. It is not ADB transport, Fastboot transport, flashing, sideload,
+unlock, or destructive-operation validation.
 
 Recovery order:
 
@@ -76,7 +86,7 @@ Recovery order:
 2. read permanent behavior contracts relevant to the active stage;
 3. read this checkpoint;
 4. verify repository HEAD, checkpoint commit identity, and exact evidence hashes;
-5. inspect any commits newer than the latest reviewed evidence commit;
+5. inspect any commits newer than the latest reviewed implementation/evidence commit;
 6. resolve any conflict before changing code;
 7. continue only from the `Next implementation stage` recorded above.
 
@@ -207,37 +217,56 @@ Stage 6A5A implementation commit:
 `55d1ff7629cf446ef5294fd689d5061b72e7f390`
 `pin USB observation and manual scan contract`
 
-Reviewed CI evidence commit:
+Stage 6A5A reviewed evidence commit:
 
 `8518204b88c1252ab34c2bc2d581f8678af54205`
 `add temporary development checkpoint`
 
-Commit `8518204b88c1252ab34c2bc2d581f8678af54205` changes only this temporary
-checkpoint document relative to the Stage 6A5A implementation commit.
+That reviewed Stage 6A5A checkpoint had 112/112 tests passing, no
+failures/errors/skips, zero observed Kotlin compiler warnings, lint 0 errors /
+4 baseline warnings, and successful `testDebugUnitTest`, `lintDebug`, and
+`assembleDebug`.
 
-Reviewed CI result for exact evidence commit
-`8518204b88c1252ab34c2bc2d581f8678af54205`:
+Stage 6A5B implementation/evidence commit:
 
-- GitHub Actions: Android CI #27 — success;
+`828d6dab289d5c7715e15d604a50fa17af73bcff`
+`wire Stage 6A5B USB observation and manual refresh`
+
+Reviewed CI result for that exact executable commit:
+
+- GitHub Actions: Android CI #33 — success;
+- run ID: `32290292423`;
 - reports artifact:
-  `NekoFlash-8518204b88c1252ab34c2bc2d581f8678af54205-reports`;
-- reports artifact SHA-256:
-  `216c1e386314c76483e2682c325436000b269b071018493b830f5e5b677994ef`;
-- 112/112 unit tests passed;
+  `NekoFlash-828d6dab289d5c7715e15d604a50fa17af73bcff-reports`;
+- original GitHub reports artifact digest:
+  `9c849b807d6cfc14086f7ae5bc450458f9049bbe7b4e61a39e41d61caaeca440`;
+- debug artifact:
+  `NekoFlash-828d6dab289d5c7715e15d604a50fa17af73bcff-debug`;
+- original GitHub debug artifact digest:
+  `3f35eefd19d70055f8dbc0bf798d851a0e7afc7dcc10bae62855794168b941cb`;
+- locally repacked reviewed reports ZIP:
+  `NekoFlash-828d6da-reports.zip`;
+- local reports SHA-256:
+  `b255e820eb6d4c8e9222744423859825a2ece04ade60254a946e4376b41fe6b2`;
+- 120/120 unit tests passed;
+- all 112 prior test identities remained present and 8 Stage 6A5B regression tests
+  were added;
 - failures/errors/skipped: 0/0/0;
-- Kotlin compiler warnings observed in the captured unit-test build log: 0;
-- lint: 0 errors / 4 warnings;
+- Kotlin compiler warnings observed in captured logs: 0;
+- lint: 0 errors / 4 known baseline warnings;
 - `testDebugUnitTest`: success;
 - `lintDebug`: success;
 - `assembleDebug`: success.
 
-Stage **6A5A — pure USB observation/manual-scan contract** is therefore
-**CI-VERIFIED** against that exact reviewed evidence commit and artifact.
+Stage **6A5B — Android USB observation wiring** is therefore **CI-VERIFIED**
+against exact commit `828d6dab289d5c7715e15d604a50fa17af73bcff`.
 
 The commit containing the current revision of this checkpoint is intentionally not
-hard-coded here; obtain it from Git history when resuming development.
+hard-coded here; obtain it from Git history when resuming development. A later
+checkpoint-only CI run may verify the documentation commit itself, but do not create
+another checkpoint-only commit merely to record that run.
 
-The next implementation stage is **6A5B — Android USB observation wiring**.
+The next implementation stage is **6B — ADB transport, read-only bring-up first**.
 
 ## 6. Reference A2 APK used for the first hardware campaign
 
@@ -305,6 +334,8 @@ Do not dismiss it as irrelevant power-only behavior during this migration.
 
 ## 9. A2 hardware discovery evidence
 
+### 9.1 Pre-6A5 control campaign
+
 Control diagnostics artifact:
 
 `NekoFlash-A2-diagnostics-20260818-203856Z.zip`
@@ -334,17 +365,67 @@ Measured `USB_ATTACHED -> USB_CANDIDATE_READY` latency was approximately:
 
 Average: approximately **7.1 ms**.
 
-Current hardware conclusion for this layer:
+Pre-6A5 hardware conclusion:
 
 - Android descriptor mapping: PASS;
 - canonical ADB descriptor classification: PASS;
 - A2 attach-to-candidate path: PASS in the 5/5 control run;
 - detach classification: observed working;
 - mode-switch watch lifecycle: observed working;
-- actual USB transport: not implemented at this checkpoint.
+- actual USB transport: not implemented.
 
-Do not generalize this into “A2 flashing is hardware verified”.
-Only the tested discovery/lifecycle layer has evidence.
+### 9.2 Stage 6A5B post-CI hardware campaign
+
+Executable commit:
+
+`828d6dab289d5c7715e15d604a50fa17af73bcff`
+
+Exact-run debug APK SHA-256:
+
+`ca29e88473da9c9d8b3636435588b06a7fb75caafd52045dfad54a492e308f14`
+
+Reviewed diagnostics:
+
+`NekoFlash-A2-diagnostics-20260819-193354Z.zip`
+
+SHA-256:
+
+`b8f9da9666b616d5428285c5533dfe922d7152c6602e974d55539c33b9d2ab55`
+
+Reviewed UI screenshots:
+
+- `7236.png` — landscape candidate-visible state —
+  `6ba362d03dac1e8f77f8679b9eff74a746174f8f93093bb71afa6357b8f80741`;
+- `7237.png` — portrait candidate-visible state —
+  `54653bd28fee336433c769662e8b342c98771dc1406aaaa0369af82d8f746e83`;
+- `7238.png` — detached/no-device state —
+  `8b1e70b9bc4a0238d4fd83baee70dc4e666870405429ab27a8c8370d9f2498bc`.
+
+Hardware-observed result:
+
+- descriptor parity remained canonical ADB `18D1:4EE7`, interface 0,
+  `FF/42/01`, bulk OUT `0x01`, bulk IN `0x81`, packet 512;
+- Home visibly rendered `POCO X3 Pro`, `ADB`, and USB detected;
+- the same candidate remained visible across orientation/Activity recreation;
+- explicit manual Refresh observed an already-present single target and preserved
+  the current generation;
+- matching detach cleared the stale Home candidate;
+- subsequent reattach returned to `CANDIDATE_READY`;
+- diagnostics ordered snapshot capture before `USB_CANDIDATE_READY`;
+- reviewed ready events remained `transport=not-opened`.
+
+Stage 6A5B hardware verdict:
+
+- Home observation wiring: **PASS**;
+- manual Refresh on an already-present target: **PASS**;
+- Activity recreation observation continuity: **PASS**;
+- matching detach UI clearing: **PASS**;
+- descriptor parity with the pinned legacy behavior: **PASS**;
+- transport boundary remains closed: **PASS** for the Stage 6A5B requirement.
+
+Do not generalize this into “ADB is connected” or “A2 flashing is hardware verified”.
+ADB transport, Fastboot transport, sideload, unlock, flashing, and destructive behavior
+remain outside this evidence boundary.
 
 ## 10. Important A/B test caveat: legacy and A2 can compete for attach
 
@@ -408,38 +489,52 @@ The first A2 ADB transport migration should be as mechanical as possible:
 
 No speculative retry/recovery should be added during that migration.
 
-## 13. Confirmed parity gaps before transport migration
+## 13. Stage 6A5B parity gaps now closed
 
-### 13.1 Home observation is not wired yet
+### 13.1 Home observation wiring
 
-At the checkpoint base, `MainActivity` still provides a default `HomeUiState()`.
-Therefore the UI may show:
+The previous gap where `MainActivity` supplied a constant empty `HomeUiState()` is
+closed by Stage 6A5B. Home now renders only coordinator-owned state that has a real
+source at this stage:
 
-- device not connected;
-- USB disconnected;
-- mode unknown;
+- detected device label;
+- observed USB mode;
+- USB observation state.
 
-while `UsbSessionCoordinator` already owns a real `CANDIDATE_READY`.
+Final protocol/operation-derived fields such as slot, topology, unlock state, and
+active operation remain intentionally absent until their real sources exist.
 
-This is an observation/UI parity gap, not evidence of failed descriptor detection.
+Hardware screenshots for exact implementation commit `828d6dab...` show
+`POCO X3 Pro`, `ADB`, and USB detected, and show the stale candidate cleared after
+matching detach.
 
-### 13.2 Legacy manual Search is missing from the Android runtime
+### 13.2 Legacy manual Search parity
 
-Legacy explicit Search performs one fresh `UsbManager.deviceList` enumeration.
+Explicit manual Search/Refresh is restored in the Android runtime.
 
-That recovery path is proven behavior and must return as an explicit user action.
-It must not be replaced by a new periodic/background retry loop.
+The pinned legacy executable reference remains:
 
-Legacy manual Search semantics:
+- `MainActivity.scanForDevices`;
+- `MainActivity.showUsbDeviceChooser`;
+- `MainActivity.connectManualCandidate`;
+- `MainActivity.requestUsbAccess`.
 
-- zero compatible candidates: report no compatible candidate;
-- one canonical/compatible candidate: continue through the existing access path;
-- multiple candidates: require explicit user selection;
-- generic Fastboot candidate: require an extra explicit confirmation;
+Stage 6A5B preserves the required semantics:
+
+- one explicit action inspects the current USB inventory;
+- zero compatible candidates report the physical inventory without inventing retry;
+- one compatible candidate advances through the existing access path;
+- multiple candidates require explicit user choice;
+- generic Fastboot requires extra explicit confirmation;
 - one temporarily empty manual enumeration does not tear down an already-current
-  USB generation; detach remains the invalidation boundary.
+  generation;
+- chooser selection is revalidated against fresh USB state before access.
 
-## 14. Stage 6A5A contract now pinned in source
+The two intentional A2 differences and their justification are recorded permanently
+in `docs/USB_OBSERVATION_STAGE6A5.md`: one inventory read per explicit Refresh, and
+UI-safe candidate summaries instead of exposing Android USB descriptor objects.
+
+## 14. Stage 6A5 observation contract pinned in source
 
 The new pure observation states are:
 
@@ -483,23 +578,35 @@ The pure manual-scan decisions currently pinned include:
 - `ConfirmGenericFastboot`
 - `Choose`
 
-## 15. Next stage after Stage 6A5A CI is proven green
+## 15. Stage 6A5B completion record
 
-Stage **6A5B — Android USB observation wiring**.
+Stage **6A5B — Android USB observation wiring** is complete for its defined scope.
 
-Intended scope:
+Implementation commit:
 
-- expose read-only coordinator observation to UI;
-- make Home reflect real coordinator state;
-- add one explicit `Refresh/Search USB` action;
-- perform exactly one fresh device-list enumeration per user action;
-- preserve multi-device chooser behavior;
-- preserve generic-Fastboot extra confirmation;
-- revalidate user selection against current USB state before access;
-- clear Home observation on a matching detach;
-- keep diagnostics aligned with UI-visible state.
+`828d6dab289d5c7715e15d604a50fa17af73bcff`
 
-Explicitly out of scope for 6A5B:
+Verified behavior:
+
+- read-only coordinator observation is wired to Home;
+- Home says detected rather than protocol-connected;
+- explicit Refresh performs the Stage 6A5 single-inventory decision;
+- multi-device chooser behavior remains explicit;
+- generic Fastboot remains behind extra confirmation;
+- chooser selection is freshly revalidated before access;
+- matching detach clears the Home observation;
+- diagnostics and UI-visible state agree on the reviewed hardware campaign;
+- transport remains unopened.
+
+Verification status:
+
+- exact-head CI: **PASS**;
+- 120/120 tests: **PASS**;
+- lint: **0 errors / 4 baseline warnings**;
+- `assembleDebug`: **PASS**;
+- post-CI hardware retest on F7 -> X3 Pro: **PASS** for Stage 6A5B invariants.
+
+Explicitly still not implemented:
 
 - `UsbDeviceConnection.open`;
 - interface claim;
@@ -508,12 +615,8 @@ Explicitly out of scope for 6A5B:
 - background retry loops;
 - destructive operations.
 
-After green CI, repeat a short hardware campaign on the same F7 -> X3 Pro setup:
-
-- attach -> Home reflects the detected patient;
-- detach -> Home clears;
-- patient already attached -> explicit Refresh discovers it;
-- repeated reconnect -> UI state and diagnostics agree.
+The permanent legacy-parity and platform-change record for this stage is
+`docs/USB_OBSERVATION_STAGE6A5.md`.
 
 ## 16. Stage after observation parity: ADB transport
 

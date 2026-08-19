@@ -6,24 +6,29 @@ Legacy behavior baseline: `c49242c771dac9d147597c0d07e9ac1c6d320254`.
 Stage 6A5 is intentionally split:
 
 - **6A5A** freezes the pure observation/manual-scan contract and regression tests;
-- **6A5B** will wire that contract into `UsbSessionCoordinator`, `MainActivity`, and
-  the temporary Home UI only after 6A5A CI is green.
+- **6A5B** wires that contract into `UsbSessionCoordinator`, `MainActivity`, and
+  the Home UI after 6A5A CI is green.
 
-This split prevents a UI/lifecycle change from being mixed with an untested USB
-selection rule.
+Stage 6A5B implementation commit:
+`828d6dab289d5c7715e15d604a50fa17af73bcff`.
+
+Stage 6A5B is CI-verified and hardware-verified for the observation/manual-rescan
+scope recorded below. This split prevented a UI/lifecycle change from being mixed
+with an untested USB selection rule.
 
 ## Why this stage exists
 
-Hardware A/B testing showed that the A2 descriptor layer is stable when Android
-delivers the USB attach to A2, but the temporary Home screen still renders a
-constant empty `HomeUiState`. A valid coordinator candidate can therefore look
+Hardware A/B testing showed that the A2 descriptor layer was stable when Android
+delivered the USB attach to A2, while the pre-6A5B Home screen still rendered a
+constant empty `HomeUiState`. A valid coordinator candidate could therefore look
 visually disconnected.
 
-The same comparison confirmed a legacy recovery path that A2 has not yet restored:
-the user-facing Search action performs one fresh `UsbManager.deviceList`
+The same comparison confirmed a legacy recovery path that pre-6A5B A2 had not yet
+restored: the user-facing Search action performs one fresh `UsbManager.deviceList`
 enumeration. It is not an automatic retry loop. Legacy cancels stale startup and
 mode-switch callbacks, inspects the current inventory once, advances one candidate,
-or requires user choice when several candidates are present.
+or requires user choice when several candidates are present. Stage 6A5B restores
+that explicit user-facing path within the contract below.
 
 ## Hardware evidence before 6A5
 
@@ -69,7 +74,7 @@ The UI-safe candidate summary is intentionally small: stable key, display label,
 observed mode, and interface index. VID/PID, endpoint objects, and protocol state
 remain coordinator/diagnostics concerns.
 
-A future `CANDIDATE_READY` observation means:
+A `CANDIDATE_READY` observation means:
 
 - descriptor classification succeeded;
 - Android USB permission is available for that candidate;
@@ -85,7 +90,7 @@ current immutable observation rather than reconstructing USB state itself.
 
 ## Explicit manual scan contract
 
-One future press on `Refresh USB` performs exactly one current inventory read.
+One press on `Refresh USB` performs exactly one current inventory read.
 
 Before that read A2 will cancel only the pending startup scan and active mode-switch
 watch, matching the legacy explicit Search boundary. It must not create a timer,
@@ -107,7 +112,7 @@ The pure decision rules frozen in 6A5A are:
 - one temporarily empty manual enumeration does not invalidate an existing current
   generation; detach remains the owner of invalidation.
 
-6A5B will additionally revalidate a chooser selection against a **fresh**
+6A5B additionally revalidates a chooser selection against a **fresh**
 device-list snapshot before permission handling, so a stale UI choice cannot inject
 an old descriptor into the coordinator.
 
@@ -193,7 +198,26 @@ generation-guarded clearing, and state retention. Manual-scan policy tests cover
 fresh chooser revalidation and generic Fastboot confirmation routing.
 
 Hardware validation:
-NOT YET VERIFIED
+PASS for exact implementation commit
+`828d6dab289d5c7715e15d604a50fa17af73bcff`.
+
+Reviewed post-CI evidence:
+- exact GitHub Actions run `32290292423` succeeded;
+- 120/120 unit tests passed, with zero failures/errors/skips;
+- lint remained 0 errors / 4 known baseline warnings;
+- exact-run APK SHA-256:
+  `ca29e88473da9c9d8b3636435588b06a7fb75caafd52045dfad54a492e308f14`;
+- diagnostics `NekoFlash-A2-diagnostics-20260819-193354Z.zip`, SHA-256
+  `b8f9da9666b616d5428285c5533dfe922d7152c6602e974d55539c33b9d2ab55`;
+- Home visibly showed POCO X3 Pro / ADB / USB detected in portrait and landscape;
+- Activity recreation preserved the coordinator-owned candidate observation;
+- explicit Refresh observed the already-present single target;
+- matching detach cleared the stale Home candidate;
+- reattach returned to `CANDIDATE_READY`;
+- all reviewed ready events remained `transport=not-opened`.
+
+This PASS is limited to Stage 6A5B observation/manual-rescan/lifecycle invariants.
+It does not verify ADB or Fastboot transport.
 ```
 
 ## Out of scope
@@ -220,14 +244,18 @@ ADB `CNXN`; no automatic close/reopen and no repeated `CNXN` recovery loop.
 - pure Kotlin compiles with warnings treated as errors;
 - normal project unit tests, lint, and `assembleDebug` remain green.
 
-6A5B will then require:
+6A5B verification result for exact implementation commit
+`828d6dab289d5c7715e15d604a50fa17af73bcff`:
 
-- exact EN/RU resource-key parity;
-- Kotlin compiler warnings remain zero;
-- lint remains zero errors with only the existing baseline warnings;
-- `assembleDebug` succeeds;
-- post-CI hardware retest confirms Home reflects the coordinator candidate and one
-  explicit Refresh USB can discover an already-present single target.
+- exact EN/RU resource-key parity: PASS;
+- Kotlin compiler warnings observed in captured CI logs: 0;
+- lint: 0 errors / 4 existing baseline warnings;
+- `assembleDebug`: PASS;
+- 120/120 unit tests: PASS;
+- post-CI hardware retest: PASS for Home observation, explicit Refresh on an
+  already-present single target, Activity recreation continuity, matching detach
+  clearing, and reattach.
 
-Hardware status for the future 6A5B UI/rescan wiring remains `NOT YET VERIFIED`.
-The pre-change A2 descriptor attach path has the five-cycle evidence recorded above.
+Stage 6A5B hardware status is therefore `PASS` for those exact invariants.
+Transport remains `NOT IMPLEMENTED`.
+The pre-change A2 descriptor attach path retains the five-cycle evidence recorded above.
