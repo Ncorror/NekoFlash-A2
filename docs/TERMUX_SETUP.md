@@ -7,7 +7,7 @@ Termux is the Git/GitHub client for NekoFlash-A2. Android builds are produced by
 ```bash
 pkg update -y
 pkg upgrade -y
-pkg install git gh openssh zip -y
+pkg install git gh openssh zip unzip -y
 ```
 
 Do not install Android Studio, Android SDK, a local Gradle toolchain, emulator, desktop adb, or desktop fastboot for this workflow.
@@ -119,6 +119,47 @@ This keeps every recovery ZIP tied to a reproducible Git state rather than an ac
 
 When a chat is interrupted, upload the newest recovery ZIP first. The new chat must follow `CHAT_RECOVERY_PROMPT.md` and reconstruct the project state before proposing or changing code.
 The recovery ZIP is a convenience backup, not a replacement for Git history, permanent behavior contracts, CI artifacts, or hardware evidence.
+
+## Publish a verified recovery to GitHub Releases
+
+A recovery ZIP is not safely archived merely because it exists in `~/storage/downloads`. After the bundle has been reviewed and declared VERIFIED, publish that exact ZIP to GitHub Releases with its verified SHA-256:
+
+```bash
+cd ~/NekoFlash-A2
+./scripts/recovery-publish \
+  ~/storage/downloads/NekoFlash-A2-recovery-<timestamp>-<sha>.zip \
+  <verified-64-character-sha256>
+```
+
+The publisher:
+
+- requires the already reviewed SHA-256 and refuses a mismatch;
+- verifies the bundle's internal `SHA256SUMS.txt` and evidence hashes;
+- verifies the bundled HEAD exists in `Ncorror/NekoFlash-A2`;
+- creates a dedicated `recovery-<12-char-commit>` prerelease targeted at that exact commit;
+- uploads both the recovery ZIP and a `.sha256` checksum asset;
+- never overwrites an existing recovery tag/release;
+- downloads the published asset again and verifies its SHA-256 before reporting success.
+
+Recovery releases are deliberately marked as prereleases and `Latest=false` so they are not confused with application releases. They provide an off-device copy of the VERIFIED recovery ZIP and are not subject to the normal GitHub Actions artifact retention workflow. A release can still be removed manually, so keeping an additional offline copy remains sensible.
+
+If the local recovery ZIP is lost, list releases and download the required recovery tag:
+
+```bash
+gh release list --repo Ncorror/NekoFlash-A2 --limit 50
+
+mkdir -p ~/storage/downloads/nekoflash-recovery-restore
+gh release download recovery-<12-char-commit> \
+  --repo Ncorror/NekoFlash-A2 \
+  --pattern 'NekoFlash-A2-recovery-*.zip' \
+  --pattern '*.sha256' \
+  --dir ~/storage/downloads/nekoflash-recovery-restore
+
+cd ~/storage/downloads/nekoflash-recovery-restore
+sha256sum -c *.sha256
+```
+
+Only a recovery bundle that has already passed review should be published. Creating a bundle and publishing it are intentionally separate steps.
 
 ## GitHub Actions
 

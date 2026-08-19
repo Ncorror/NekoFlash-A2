@@ -1,0 +1,253 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+set -euo pipefail
+
+EXPECTED_REPO="Ncorror/NekoFlash-A2"
+MAX_RELEASE_ASSET_BYTES=2147483648
+
+fail() {
+    echo "Error: $*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  ./scripts/recovery-publish <verified-recovery.zip> <verified-sha256>
+
+Publishes one already VERIFIED recovery bundle as a GitHub Release asset.
+
+Safety rules:
+- the supplied SHA-256 must match the local ZIP;
+- the ZIP internal SHA256SUMS.txt must verify completely;
+- bundled evidence hashes must verify when present;
+- the bundled HEAD must exist in Ncorror/NekoFlash-A2;
+- a release/tag for the same recovery HEAD must not already exist;
+- the release is created as a prerelease and is not marked Latest;
+- the uploaded ZIP is downloaded again and its SHA-256 is rechecked;
+- existing release assets are never overwritten.
+
+This command does not modify, stage, commit, or push repository files.
+USAGE
+}
+
+if [ "$#" -ne 2 ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    usage
+    [ "$#" -eq 2 ] || exit 2
+fi
+
+bundle="$1"
+expected_sha="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+
+for cmd in git gh unzip sha256sum find sort sed awk grep stat readlink; do
+    command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is not installed"
+done
+
+[[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || fail "verified SHA-256 must be exactly 64 hexadecimal characters"
+
+[ -f "$bundle" ] || fail "recovery ZIP not found: $bundle"
+bundle="$(readlink -f "$bundle")"
+bundle_name="$(basename "$bundle")"
+
+case "$bundle_name" in
+    NekoFlash-A2-recovery-*.zip)
+        ;;
+    *)
+        fail "unexpected recovery filename: $bundle_name"
+        ;;
+esac
+
+bundle_size="$(stat -c '%s' "$bundle")"
+[ "$bundle_size" -lt "$MAX_RELEASE_ASSET_BYTES" ] || fail "release asset must be smaller than 2 GiB"
+
+actual_sha="$(sha256sum "$bundle" | awk '{print $1}')"
+[ "$actual_sha" = "$expected_sha" ] || {
+    echo "EXPECTED: $expected_sha" >&2
+    echo "ACTUAL  : $actual_sha" >&2
+    fail "recovery ZIP SHA-256 does not match the VERIFIED value"
+}
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "run this helper from the NekoFlash-A2 Git repository"
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+origin_url="$(git remote get-url origin 2>/dev/null || true)"
+case "$origin_url" in
+    "https://github.com/$EXPECTED_REPO"|"https://github.com/$EXPECTED_REPO.git"|"git@github.com:$EXPECTED_REPO.git")
+        ;;
+    *)
+        fail "unexpected origin: ${origin_url:-<missing>} (expected $EXPECTED_REPO)"
+        ;;
+esac
+
+if [ -n "$(git status --porcelain)" ]; then
+    git status --short --branch >&2
+    fail "working tree must be clean before publishing an official recovery"
+fi
+
+echo "== Verify GitHub authentication =="
+gh auth status --active --hostname github.com >/dev/null 2>&1 || fail "GitHub CLI authentication is missing or invalid"
+
+work_dir="$(mktemp -d)"
+cleanup() {
+    rm -rf "$work_dir"
+}
+trap cleanup EXIT
+
+entry_list="$work_dir/zip-entries.txt"
+unzip -Z1 "$bundle" > "$entry_list"
+
+if awk '
+    /^\// { bad=1; print "Unsafe absolute ZIP entry: " $0 > "/dev/stderr" }
+    /(^|\/)\.\.($|\/)/ { bad=1; print "Unsafe parent ZIP entry: " $0 > "/dev/stderr" }
+    END { exit bad ? 1 : 0 }
+' "$entry_list"; then
+    :
+else
+    fail "recovery ZIP contains unsafe paths"
+fi
+
+echo "== Verify recovery bundle internals =="
+extract_dir="$work_dir/extracted"
+mkdir -p "$extract_dir"
+unzip -q "$bundle" -d "$extract_dir"
+
+for required in \
+    SHA256SUMS.txt \
+    CHAT_RECOVERY_PROMPT.md \
+    state/PROJECT_STATE.txt \
+    state/head-sha.txt \
+    state/origin-branch-sha.txt \
+    ci/current-head.json \
+    ci/artifacts.json \
+    ci/artifacts.txt \
+    evidence/EVIDENCE_SHA256.txt; do
+    [ -f "$extract_dir/$required" ] || fail "recovery bundle is missing $required"
+done
+
+(
+    cd "$extract_dir"
+    sha256sum -c SHA256SUMS.txt >/dev/null
+) || fail "recovery bundle SHA256SUMS.txt verification failed"
+
+(
+    cd "$extract_dir/evidence"
+    sha256sum -c EVIDENCE_SHA256.txt >/dev/null
+) || fail "recovery evidence SHA-256 verification failed"
+
+evidence_count="$(find "$extract_dir/evidence" -maxdepth 1 -type f ! -name EVIDENCE_SHA256.txt | wc -l | tr -d ' ')"
+[ "$evidence_count" -gt 0 ] || fail "official recovery bundle contains no evidence files"
+
+bundle_head="$(tr -d '\r\n' < "$extract_dir/state/head-sha.txt")"
+bundle_remote="$(tr -d '\r\n' < "$extract_dir/state/origin-branch-sha.txt")"
+[[ "$bundle_head" =~ ^[0-9a-f]{40}$ ]] || fail "invalid bundled HEAD: $bundle_head"
+[ "$bundle_head" = "$bundle_remote" ] || fail "bundled HEAD differs from bundled origin/main"
+
+grep -Fq "$bundle_head" "$extract_dir/ci/current-head.json" || fail "CI metadata does not reference bundled HEAD"
+grep -Fq "$bundle_head" "$extract_dir/ci/artifacts.json" || fail "artifact metadata does not reference bundled HEAD"
+
+source_count="$(find "$extract_dir/source" -maxdepth 1 -type f -name "NekoFlash-A2-${bundle_head}.zip" | wc -l | tr -d ' ')"
+[ "$source_count" = "1" ] || fail "exact source snapshot for bundled HEAD is missing or ambiguous"
+
+echo "== Verify bundled commit on GitHub =="
+remote_commit="$(gh api "repos/$EXPECTED_REPO/commits/$bundle_head" --jq '.sha')"
+[ "$remote_commit" = "$bundle_head" ] || fail "GitHub did not resolve bundled HEAD exactly"
+
+short_sha="${bundle_head:0:12}"
+tag="recovery-$short_sha"
+release_title="NekoFlash A2 Recovery $short_sha"
+
+if gh release view "$tag" --repo "$EXPECTED_REPO" >/dev/null 2>&1; then
+    fail "release $tag already exists; existing verified recovery releases are never overwritten"
+fi
+
+if gh api "repos/$EXPECTED_REPO/git/ref/tags/$tag" >/dev/null 2>&1; then
+    fail "tag $tag already exists without the expected new release; resolve it manually"
+fi
+
+checksum_file="$work_dir/$bundle_name.sha256"
+printf '%s  %s\n' "$actual_sha" "$bundle_name" > "$checksum_file"
+
+branch_line="$(sed -n 's/^Branch: //p' "$extract_dir/state/PROJECT_STATE.txt" | head -n 1)"
+[ -n "$branch_line" ] || branch_line="unknown"
+
+notes_file="$work_dir/release-notes.md"
+cat > "$notes_file" <<NOTES
+# NekoFlash A2 verified recovery
+
+This release stores an externally reviewed NekoFlash A2 chat/development recovery bundle.
+
+- Bundled HEAD: \`$bundle_head\`
+- Bundled branch: \`$branch_line\`
+- Recovery asset: \`$bundle_name\`
+- Recovery SHA-256: \`$actual_sha\`
+- Internal SHA manifest: verified before publication
+- Bundled evidence SHA manifest: verified before publication
+
+The ZIP contains its own restore procedure in \`CHAT_RECOVERY_PROMPT.md\`.
+It also preserves exact source, Git/CI metadata, original GitHub Actions artifact digests, local evidence hashes, and the project checkpoint/contracts needed to reconstruct development context.
+
+This is a recovery archive, not an application release. It is intentionally published as a prerelease and is not marked Latest.
+NOTES
+
+echo "== Publish verified recovery release =="
+gh release create "$tag" \
+    "$bundle" \
+    "$checksum_file" \
+    --repo "$EXPECTED_REPO" \
+    --target "$bundle_head" \
+    --title "$release_title" \
+    --notes-file "$notes_file" \
+    --prerelease \
+    --latest=false
+
+resolved_tag_commit="$(gh api "repos/$EXPECTED_REPO/commits/$tag" --jq '.sha')"
+[ "$resolved_tag_commit" = "$bundle_head" ] || fail "published recovery tag does not resolve to bundled HEAD"
+
+release_json="$work_dir/release.json"
+gh release view "$tag" \
+    --repo "$EXPECTED_REPO" \
+    --json tagName,isDraft,isPrerelease,url \
+    > "$release_json"
+
+release_tag="$(gh release view "$tag" --repo "$EXPECTED_REPO" --json tagName --jq '.tagName')"
+release_draft="$(gh release view "$tag" --repo "$EXPECTED_REPO" --json isDraft --jq '.isDraft')"
+release_prerelease="$(gh release view "$tag" --repo "$EXPECTED_REPO" --json isPrerelease --jq '.isPrerelease')"
+release_url="$(gh release view "$tag" --repo "$EXPECTED_REPO" --json url --jq '.url')"
+
+[ "$release_tag" = "$tag" ] || fail "release tag mismatch after publication"
+[ "$release_draft" = "false" ] || fail "recovery release unexpectedly remained a draft"
+[ "$release_prerelease" = "true" ] || fail "recovery release is not marked as prerelease"
+
+echo "== Download published assets and verify bytes =="
+verify_dir="$work_dir/downloaded"
+mkdir -p "$verify_dir"
+
+gh release download "$tag" \
+    --repo "$EXPECTED_REPO" \
+    --pattern "$bundle_name" \
+    --pattern "$bundle_name.sha256" \
+    --dir "$verify_dir"
+
+downloaded_sha="$(sha256sum "$verify_dir/$bundle_name" | awk '{print $1}')"
+[ "$downloaded_sha" = "$actual_sha" ] || fail "downloaded GitHub Release asset SHA-256 differs from verified local bundle"
+
+(
+    cd "$verify_dir"
+    sha256sum -c "$bundle_name.sha256" >/dev/null
+) || fail "downloaded checksum asset does not verify the downloaded recovery ZIP"
+
+cat <<RESULT
+
+==========================================
+NEKOFLASH RECOVERY RELEASE PUBLISHED
+==========================================
+Tag: $tag
+HEAD: $bundle_head
+Asset: $bundle_name
+SHA-256: $actual_sha
+Remote download verification: PASS
+Release: $release_url
+
+If the local recovery ZIP is later deleted, download this release asset and its .sha256 file, then verify it with sha256sum -c before restoring a chat.
+RESULT
