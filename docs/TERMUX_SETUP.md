@@ -56,6 +56,74 @@ It does not stage files and does not create commits. It verifies GitHub authenti
 repository identity, a clean working tree, and remote divergence before pushing.
 If GitHub authentication is missing or invalid, it starts the normal browser login flow.
 
+## Canonical assistant ↔ Termux workflow
+
+This section is the binding operator contract for chat-assisted changes. A new or recovered chat must read this section before giving Termux commands that can change the repository, create/publish recovery data, or select CI evidence. Do not invent an alternative workflow merely because a different shell command would also work.
+
+Canonical identities and helpers:
+
+- repository root: `~/NekoFlash-A2`;
+- GitHub repository: `Ncorror/NekoFlash-A2`;
+- push helper: `./scripts/gpush` (the installed `gpush` command is the same helper);
+- recovery creation: `./scripts/recovery-bundle`;
+- verified recovery publication: `./scripts/recovery-publish`.
+
+Authentication rules:
+
+- do not log out or reset GitHub authentication during normal work;
+- use the existing authenticated `gh` session while it is valid;
+- only run the clean re-authentication procedure above when authentication is actually invalid or the user explicitly requests a reset;
+- never place GitHub tokens, `hosts.yml`, credentials, or other secrets into patches, recovery bundles, chat artifacts, or the repository.
+
+### Standard delivery for an assistant-produced repository change
+
+The default handoff is **one install ZIP**, not an improvised multi-command paste and not a full source-tree replacement. The ZIP contains exactly:
+
+```text
+<change>-install.zip
+├── APPLY_IN_TERMUX.sh
+├── <change>.patch
+└── README.txt
+```
+
+The user downloads that one ZIP to Android `Downloads`, then runs one launcher command with the actual package names supplied by the assistant:
+
+```bash
+cd ~/storage/downloads && \
+rm -rf <install-dir> && \
+unzip -o <install-zip> && \
+bash <install-dir>/APPLY_IN_TERMUX.sh
+```
+
+The assistant must not assume a chat-generated file already exists under `~/storage/downloads`; the file must first be provided to and downloaded by the user.
+
+`APPLY_IN_TERMUX.sh` must:
+
+1. resolve its absolute `SCRIPT_DIR` before any `cd`;
+2. enter `~/NekoFlash-A2`;
+3. require the expected branch and a clean working tree;
+4. verify repository identity and GitHub authentication;
+5. run `git fetch origin`;
+6. verify both local HEAD and `origin/<branch>` against the exact reviewed baseline encoded in the installer;
+7. verify the reviewed patch SHA-256;
+8. run `git apply --check` before applying it;
+9. apply only that reviewed patch;
+10. verify the complete changed-file set, including untracked files;
+11. run `git diff --check`;
+12. run syntax checks such as `bash -n` for changed shell scripts when applicable;
+13. stage only the exact reviewed files, never `git add .`;
+14. verify the staged-file set and `git diff --cached --check`;
+15. create exactly one intended commit;
+16. push through `./scripts/gpush`;
+17. fetch again and verify local HEAD equals the remote branch;
+18. finish with a clean working tree.
+
+If an error occurs before commit, the installer should restore only the files it changed. If commit succeeds but push fails, preserve the local commit and report the failure; do not destroy history automatically.
+
+Do not create a second push helper, a replacement recovery helper, or a new authentication wrapper when the tracked project scripts already cover the operation. If this canonical workflow cannot perform a genuinely required task, state the exact gap before proposing a deviation.
+
+A full source ZIP may be supplied for review or disaster recovery, but ordinary repository mutations should use the reviewed patch/install-ZIP path above so Git records the exact change.
+
 ## Daily Git workflow
 
 ```bash
@@ -163,29 +231,87 @@ Only a recovery bundle that has already passed review should be published. Creat
 
 ## GitHub Actions
 
-List recent runs:
+CI must be selected by the **exact committed HEAD**, not by whichever run happens to be newest. Start from a clean synchronized checkout and derive identifiers dynamically:
 
 ```bash
-gh run list --limit 10
+cd ~/NekoFlash-A2
+git fetch origin
+
+HEAD="$(git rev-parse HEAD)"
+REMOTE="$(git rev-parse origin/main)"
+
+[ "$HEAD" = "$REMOTE" ] || {
+  echo "ERROR: local HEAD and origin/main differ"
+  exit 1
+}
+
+RUN_ID="$(
+  gh run list \
+    --commit "$HEAD" \
+    --limit 1 \
+    --json databaseId \
+    --jq '.[0].databaseId // empty'
+)"
+
+[ -n "$RUN_ID" ] || {
+  echo "ERROR: no GitHub Actions run found for $HEAD"
+  exit 1
+}
+
+RUN_HEAD="$(gh run view "$RUN_ID" --json headSha --jq '.headSha')"
+[ "$RUN_HEAD" = "$HEAD" ] || {
+  echo "ERROR: selected run does not belong to HEAD $HEAD"
+  exit 1
+}
+
+echo "HEAD=$HEAD"
+echo "RUN_ID=$RUN_ID"
+
+gh run watch "$RUN_ID" --exit-status
 ```
 
-Watch the newest run and return a failing exit code if CI fails:
+Inspect that exact run when needed:
 
 ```bash
-gh run watch --exit-status
+gh run view "$RUN_ID"
+gh run view "$RUN_ID" --log-failed
 ```
 
-Inspect a failed run:
+Download and repack only the `-reports` artifact from that same run:
 
 ```bash
-gh run view --log-failed
+mapfile -t REPORT_ARTIFACTS < <(
+  gh api "repos/Ncorror/NekoFlash-A2/actions/runs/$RUN_ID/artifacts?per_page=100" \
+    --jq '.artifacts[] | select(.name | endswith("-reports")) | .name'
+)
+
+[ "${#REPORT_ARTIFACTS[@]}" -eq 1 ] || {
+  echo "ERROR: expected exactly one reports artifact, found ${#REPORT_ARTIFACTS[@]}"
+  exit 1
+}
+
+SHORT_HEAD="${HEAD:0:7}"
+REPORT_DIR="$HOME/storage/downloads/NekoFlash-${SHORT_HEAD}-reports"
+REPORT_ZIP="$HOME/storage/downloads/NekoFlash-${SHORT_HEAD}-reports.zip"
+
+rm -rf "$REPORT_DIR"
+rm -f "$REPORT_ZIP"
+mkdir -p "$REPORT_DIR"
+
+gh run download "$RUN_ID" \
+  --name "${REPORT_ARTIFACTS[0]}" \
+  --dir "$REPORT_DIR"
+
+(
+  cd "$REPORT_DIR"
+  zip -q -r "$REPORT_ZIP" .
+)
+
+sha256sum "$REPORT_ZIP"
 ```
 
-Download artifacts:
+The SHA-256 of this locally repacked reports ZIP is a local evidence hash and is not assumed to equal the original GitHub Actions artifact digest. `scripts/recovery-bundle` preserves both values separately.
 
-```bash
-mkdir -p ~/downloads/nekoflash-ci
-gh run download --dir ~/downloads/nekoflash-ci
-```
+When a new chat provides Termux commands, commit SHAs, run IDs, artifact names, and recovery filenames must be derived from the current live Git/recovery state. Do not reuse stale identifiers copied from an older chat merely because the command shape is still correct.
 
 CI success proves only the automated checks. USB/ADB/Fastboot behavior remains `NOT YET VERIFIED` until the relevant hardware test is performed.

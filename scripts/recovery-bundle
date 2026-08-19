@@ -6,6 +6,7 @@ EXPECTED_REPO="Ncorror/NekoFlash-A2"
 OUTPUT_DIR="${NEKOFLASH_RECOVERY_DIR:-$HOME/storage/downloads}"
 CHECKPOINT="docs/DEVELOPMENT_CHECKPOINT_TEMPORARY.md"
 MASTER_PROMPT="docs/ARCHITECTURE_A2_MASTER_PROMPT.md"
+TERMUX_RUNBOOK="docs/TERMUX_SETUP.md"
 
 fail() {
     echo "Error: $*" >&2
@@ -64,6 +65,7 @@ fi
 
 [ -f "$CHECKPOINT" ] || fail "missing $CHECKPOINT"
 [ -f "$MASTER_PROMPT" ] || fail "missing $MASTER_PROMPT"
+[ -f "$TERMUX_RUNBOOK" ] || fail "missing $TERMUX_RUNBOOK"
 
 for evidence in "$@"; do
     [ -f "$evidence" ] || fail "evidence file not found: $evidence"
@@ -90,6 +92,7 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 checkpoint_commit="$(git log -1 --format=%H -- "$CHECKPOINT")"
 checkpoint_sha="$(sha256sum "$CHECKPOINT" | awk '{print $1}')"
 master_prompt_sha="$(sha256sum "$MASTER_PROMPT" | awk '{print $1}')"
+termux_runbook_sha="$(sha256sum "$TERMUX_RUNBOOK" | awk '{print $1}')"
 
 mkdir -p "$OUTPUT_DIR"
 work_dir="$(mktemp -d)"
@@ -123,6 +126,8 @@ Checkpoint last-change commit: $checkpoint_commit
 Checkpoint SHA-256: $checkpoint_sha
 Master prompt file: $MASTER_PROMPT
 Master prompt SHA-256: $master_prompt_sha
+Termux runbook file: $TERMUX_RUNBOOK
+Termux runbook SHA-256: $termux_runbook_sha
 Source archive: source/$source_archive
 GitHub artifact metadata: ci/artifacts.json
 GitHub artifact digest summary: ci/artifacts.txt
@@ -157,7 +162,8 @@ Restore in this order:
    - permanent behavior contracts relevant to the current stage, especially
      `docs/LEGACY_BEHAVIOR_BASELINE.md` and `docs/USB_BEHAVIOR_CONTRACT.md`;
    - `docs/DEVELOPMENT_CHECKPOINT_TEMPORARY.md`;
-   - the stage-specific contract named by the checkpoint.
+   - the stage-specific contract named by the checkpoint;
+   - `docs/TERMUX_SETUP.md`, especially `Canonical assistant ↔ Termux workflow`.
 4. Inspect `ci/current-head.json`, `ci/current-head.txt`, `ci/artifacts.json`, `ci/artifacts.txt`, and any files under `evidence/`.
    - Treat `digest` values in `ci/artifacts.json` as metadata for the original GitHub-hosted artifacts.
    - Treat `evidence/EVIDENCE_SHA256.txt` and `SHA256SUMS.txt` as hashes of files actually bundled locally.
@@ -168,6 +174,16 @@ Restore in this order:
    - verify CI status for the relevant exact commit;
    - do not upgrade CI or hardware evidence vocabulary beyond what artifacts prove.
 6. If the live repository, permanent contracts, checkpoint, or evidence disagree, stop and report the conflict before changing code.
+
+Termux command contract:
+
+- Before giving any Termux command that can mutate Git state, publish recovery data, or select CI evidence, read `docs/TERMUX_SETUP.md` from the bundled source and treat its `Canonical assistant ↔ Termux workflow` as binding.
+- Re-check the live repository before using exact commit SHAs. Derive current commit SHA, CI run ID, artifact names, and recovery filenames from current Git/GitHub state; do not reuse stale identifiers from an older chat.
+- Use the tracked project helpers (`./scripts/gpush`, `./scripts/recovery-bundle`, `./scripts/recovery-publish`) instead of inventing parallel push/recovery/authentication scripts.
+- For assistant-produced repository changes, use the one-install-ZIP contract documented in `docs/TERMUX_SETUP.md`: one `APPLY_IN_TERMUX.sh`, one reviewed patch, and one `README.txt`.
+- Never assume a file generated in chat already exists in Android `Downloads`; provide the artifact first and have the user download it before referring to that path.
+- Do not use `git add .` for migration changes and do not reset GitHub authentication unless it is actually invalid or the user explicitly requests a reset.
+- If the canonical Termux workflow cannot perform a genuinely required task, report the exact gap before proposing a different workflow.
 
 Before continuing development, report these items explicitly:
 
