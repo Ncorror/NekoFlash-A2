@@ -20,14 +20,19 @@ git config --global user.email "rastaxd1102@gmail.com"
 git config --global init.defaultBranch main
 ```
 
-## Authenticate GitHub
+## Clean GitHub re-authentication
+
+Use this only when authentication must be reset deliberately:
 
 ```bash
+gh auth logout --hostname github.com --user Ncorror || true
 gh auth login --hostname github.com --git-protocol https --web
 gh auth switch --hostname github.com --user Ncorror
 gh auth setup-git --hostname github.com
 gh auth status --active --hostname github.com
 ```
+
+`gh auth logout` removes the stored local authentication configuration. It does not revoke GitHub CLI OAuth tokens on other devices.
 
 ## Clone the repository
 
@@ -37,27 +42,40 @@ gh repo clone Ncorror/NekoFlash-A2
 cd NekoFlash-A2
 ```
 
-## Install the push helper
+## Install the single push helper
 
 From the repository root:
 
 ```bash
+rm -f "$PREFIX/bin/gpush"
 install -m 0755 scripts/gpush "$PREFIX/bin/gpush"
 ```
 
-`gpush` never stores a password or token. Authentication stays with GitHub CLI.
+There is only one project push helper: `scripts/gpush` (installed as `gpush`).
+It does not stage files and does not create commits. It verifies GitHub authentication,
+repository identity, a clean working tree, and remote divergence before pushing.
+If GitHub authentication is missing or invalid, it starts the normal browser login flow.
 
 ## Daily Git workflow
 
 ```bash
+cd ~/NekoFlash-A2
 git status
 git pull --ff-only
-git switch -c a2/<small-change>
-# edit files
-git add .
+
+# edit files or apply a reviewed patch
+
+git diff --check
+git diff
+
+git add <exact-files-to-commit>
+git diff --cached --check
+git diff --cached
 git commit -m "small verified change"
 gpush
 ```
+
+Do not use `git add .` for migration stages. Stage the exact reviewed files.
 
 ## GitHub Actions
 
@@ -67,10 +85,10 @@ List recent runs:
 gh run list --limit 10
 ```
 
-Watch a run:
+Watch the newest run and return a failing exit code if CI fails:
 
 ```bash
-gh run watch
+gh run watch --exit-status
 ```
 
 Inspect a failed run:

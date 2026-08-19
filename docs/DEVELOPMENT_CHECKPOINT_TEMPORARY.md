@@ -13,6 +13,77 @@
 
 Last updated: **2026-08-19**
 
+## 0. Recovery card
+
+Use this section first when resuming development after an interrupted chat/session.
+
+Canonical repository:
+
+`https://github.com/Ncorror/NekoFlash-A2`
+
+Latest reviewed A2 evidence commit:
+
+`8518204b88c1252ab34c2bc2d581f8678af54205`
+`add temporary development checkpoint`
+
+Its parent `55d1ff7629cf446ef5294fd689d5061b72e7f390` contains the executable
+Stage 6A5A implementation. Commit `8518204b88c1252ab34c2bc2d581f8678af54205`
+changes only this temporary checkpoint document, so the executable code is unchanged.
+
+Do not hard-code the commit that contains the current revision of this checkpoint.
+Resolve it from Git when resuming:
+
+`git log -1 --format=%H -- docs/DEVELOPMENT_CHECKPOINT_TEMPORARY.md`
+
+Also verify the repository HEAD with `git rev-parse HEAD` and inspect every commit
+after the latest reviewed evidence commit before continuing development.
+
+Current completed implementation stage:
+
+**6A5A — pure USB observation/manual-scan contract — CI-VERIFIED**
+
+Next implementation stage:
+
+**6A5B — Android USB observation wiring — NOT STARTED**
+
+Current transport boundary:
+
+- USB descriptor/discovery/lifecycle layer exists;
+- `CANDIDATE_READY` is not a protocol connection;
+- ADB transport: **NOT IMPLEMENTED**;
+- Fastboot transport: **NOT IMPLEMENTED**;
+- destructive A2 operations: **NOT IMPLEMENTED**.
+
+Latest reviewed CI evidence:
+
+- GitHub Actions run: Android CI #27;
+- exact commit: `8518204b88c1252ab34c2bc2d581f8678af54205`;
+- reports artifact:
+  `NekoFlash-8518204b88c1252ab34c2bc2d581f8678af54205-reports`;
+- reports artifact SHA-256:
+  `216c1e386314c76483e2682c325436000b269b071018493b830f5e5b677994ef`;
+- 112/112 unit tests passed;
+- failures/errors/skipped: 0/0/0;
+- Kotlin compiler warnings observed in the captured unit-test build log: 0;
+- lint: 0 errors / 4 warnings;
+- `testDebugUnitTest`: success;
+- `lintDebug`: success;
+- `assembleDebug`: success.
+
+Recovery order:
+
+1. read `docs/ARCHITECTURE_A2_MASTER_PROMPT.md`;
+2. read permanent behavior contracts relevant to the active stage;
+3. read this checkpoint;
+4. verify repository HEAD, checkpoint commit identity, and exact evidence hashes;
+5. inspect any commits newer than the latest reviewed evidence commit;
+6. resolve any conflict before changing code;
+7. continue only from the `Next implementation stage` recorded above.
+
+Do not use chat memory as the only source of project state.
+Do not create recursive checkpoint-only commits merely to record CI for an earlier
+checkpoint-only commit; Git history already records those documentation revisions.
+
 ## 1. Source of truth and protected behavior
 
 NekoFlash A2 is a clean implementation that preserves proven NekoFlash behavior.
@@ -116,7 +187,7 @@ Final Welcome direction:
 
 ## 5. CI checkpoint
 
-Last fully reviewed CI baseline before Stage 6A5A:
+Previous fully reviewed CI baseline before Stage 6A5A:
 
 `b1298946b463202d54054ff8689192602f6f0134`
 `finish diagnostics export verification`
@@ -131,19 +202,42 @@ Verified result:
 - `lintDebug`: success;
 - `assembleDebug`: success.
 
-Current development head when this checkpoint was prepared:
+Stage 6A5A implementation commit:
 
 `55d1ff7629cf446ef5294fd689d5061b72e7f390`
 `pin USB observation and manual scan contract`
 
-Stage: **6A5A — pure USB observation/manual-scan contract**
+Reviewed CI evidence commit:
 
-CI status at checkpoint creation: **PENDING REVIEW**.
+`8518204b88c1252ab34c2bc2d581f8678af54205`
+`add temporary development checkpoint`
 
-Do not replace that with PASS until the reports artifact is inspected.
+Commit `8518204b88c1252ab34c2bc2d581f8678af54205` changes only this temporary
+checkpoint document relative to the Stage 6A5A implementation commit.
 
-Expected Stage 6A5A total, if all new tests execute as intended: **112 tests**.
-This number is an expectation, not evidence.
+Reviewed CI result for exact evidence commit
+`8518204b88c1252ab34c2bc2d581f8678af54205`:
+
+- GitHub Actions: Android CI #27 — success;
+- reports artifact:
+  `NekoFlash-8518204b88c1252ab34c2bc2d581f8678af54205-reports`;
+- reports artifact SHA-256:
+  `216c1e386314c76483e2682c325436000b269b071018493b830f5e5b677994ef`;
+- 112/112 unit tests passed;
+- failures/errors/skipped: 0/0/0;
+- Kotlin compiler warnings observed in the captured unit-test build log: 0;
+- lint: 0 errors / 4 warnings;
+- `testDebugUnitTest`: success;
+- `lintDebug`: success;
+- `assembleDebug`: success.
+
+Stage **6A5A — pure USB observation/manual-scan contract** is therefore
+**CI-VERIFIED** against that exact reviewed evidence commit and artifact.
+
+The commit containing the current revision of this checkpoint is intentionally not
+hard-coded here; obtain it from Git history when resuming development.
+
+The next implementation stage is **6A5B — Android USB observation wiring**.
 
 ## 6. Reference A2 APK used for the first hardware campaign
 
