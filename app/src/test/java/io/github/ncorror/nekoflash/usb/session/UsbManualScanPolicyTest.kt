@@ -151,6 +151,71 @@ class UsbManualScanPolicyTest {
         assertEquals(0, summary.interfaceIndex)
     }
 
+
+    @Test
+    fun `fresh chooser revalidation rejects stale stable key`() {
+        val decision = UsbManualScanPolicy.decideChosen(
+            stableKey = "missing",
+            devices = listOf(device(id = 1)),
+        )
+
+        assertEquals(null, decision)
+    }
+
+    @Test
+    fun `fresh chooser revalidation returns candidate from new descriptor snapshot`() {
+        val original = UsbInterfaceSelector.selectPrimaryCandidate(
+            device(id = 1, name = "/dev/current"),
+        )!!
+        val refreshed = device(id = 99, name = "/dev/current")
+
+        val decision = UsbManualScanPolicy.decideChosen(
+            stableKey = original.stableKey,
+            devices = listOf(refreshed),
+        )
+
+        assertTrue(decision is UsbManualScanDecision.Select)
+        decision as UsbManualScanDecision.Select
+        assertEquals(99, decision.candidate.device.deviceId)
+        assertEquals(original.stableKey, decision.candidate.stableKey)
+    }
+
+
+    @Test
+    fun `fresh chooser revalidation selects requested candidate from ambiguous inventory`() {
+        val first = UsbInterfaceSelector.selectPrimaryCandidate(device(id = 1, name = "/dev/1"))!!
+
+        val decision = UsbManualScanPolicy.decideChosen(
+            stableKey = first.stableKey,
+            devices = listOf(
+                device(id = 2, name = "/dev/2"),
+                device(id = 10, name = "/dev/1"),
+            ),
+        )
+
+        assertTrue(decision is UsbManualScanDecision.Select)
+        decision as UsbManualScanDecision.Select
+        assertEquals(10, decision.candidate.device.deviceId)
+        assertEquals(2, decision.physicalDeviceCount)
+    }
+
+    @Test
+    fun `fresh chooser revalidation preserves generic confirmation requirement`() {
+        val generic = UsbInterfaceSelector.selectPrimaryCandidate(
+            device(id = 5, genericFastboot = true),
+        )!!
+
+        val decision = UsbManualScanPolicy.decideChosen(
+            stableKey = generic.stableKey,
+            devices = listOf(device(id = 55, name = "/dev/5", genericFastboot = true)),
+        )
+
+        assertTrue(decision is UsbManualScanDecision.ConfirmGenericFastboot)
+        decision as UsbManualScanDecision.ConfirmGenericFastboot
+        assertEquals(55, decision.candidate.device.deviceId)
+        assertEquals(UsbInterfaceSelector.MatchKind.GENERIC_FASTBOOT, decision.candidate.matchKind)
+    }
+
     private fun device(
         id: Int,
         name: String = "/dev/$id",

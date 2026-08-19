@@ -111,6 +111,91 @@ The pure decision rules frozen in 6A5A are:
 device-list snapshot before permission handling, so a stale UI choice cannot inject
 an old descriptor into the coordinator.
 
+## 6A5B implementation notes
+
+The 6A5B Home renders only state that has a real source at this stage: detected
+device label, observed USB mode, and coordinator USB state. Final Home fields such
+as slot, topology, unlock state, and active operation are intentionally not rendered
+until their real protocol/operation sources exist. This preserves the master prompt
+rule that production UI must not contain placeholder state.
+
+When manual Search finds no compatible candidate, A2 records the physical inventory
+from the same single `UsbManager.deviceList` snapshot used for the decision. It does
+not perform a second troubleshooting enumeration. This preserves the legacy
+troubleshooting evidence while keeping the Stage 6A5 one-read contract.
+
+### Legacy parity record: explicit Search
+
+Compared against pinned legacy baseline `c49242c771dac9d147597c0d07e9ac1c6d320254`,
+`MainActivity.scanForDevices`, `showUsbDeviceChooser`, `connectManualCandidate`, and
+`requestUsbAccess` remain the executable reference for this user action:
+
+- Search cancels pending startup discovery and the active mode-switch watch;
+- Search enumerates the currently visible USB inventory and classifies with generic
+  Fastboot fallback enabled;
+- zero compatible candidates report a failure plus the physical USB inventory without
+  disconnecting an existing generation;
+- one non-generic candidate advances through the existing access/permission path with
+  `automatic=false`;
+- one generic Fastboot candidate requires explicit user confirmation before that same
+  access/permission path;
+- multiple candidates require explicit user choice and never auto-select one merely
+  because it is already current;
+- chooser-selected generic Fastboot still requires the same confirmation boundary;
+- permission handling remains the already-migrated A2 permission policy, which preserves
+  the legacy callback rebind-by-device behavior.
+
+Intentional observable differences are limited to behavior already frozen by this Stage
+contract and the master prompt:
+
+- legacy troubleshooting logging performs another `deviceList` read; 6A5 requires one
+  read per Refresh press, so A2 records equivalent inventory evidence from that same
+  snapshot instead of enumerating twice;
+- legacy dialogs render a broader descriptor subtitle; Compose receives only the
+  UI-safe candidate summary frozen above, while the warning meaning and explicit
+  confirmation remain unchanged.
+
+No legacy transport step is migrated here. After permission and snapshot capture A2
+still stops at `CANDIDATE_READY` with `transport=not-opened`.
+
+### Platform-change record: Activity observation lifetime
+
+```text
+Legacy mechanism:
+USB/connection presentation was rebuilt from Activity/ViewModel observers, and
+Activity-local dialog/presentation state disappeared with that Activity instance.
+
+Invariant preserved:
+UsbSessionCoordinator remains the sole USB owner. Activity recreation does not
+re-enumerate USB to reconstruct current descriptor/permission state, does not open
+transport, and cannot cancel a replacement Activity's observer. Manual Search still
+requires an explicit user action and preserves the legacy selection/confirmation
+boundary.
+
+Platform reason:
+A2 requires Application-scoped USB ownership while Compose needs an immutable
+current snapshot after Activity recreation. The UI therefore observes, but does not
+own or reconstruct, coordinator state.
+
+Observable difference:
+A replacement Activity immediately receives the coordinator's current immutable
+USB observation. Final protocol-derived Home fields are omitted until real sources
+exist instead of rendering permanent placeholder values.
+
+Risk:
+Lifecycle ordering could let an old Activity clear a newer observer or let UI state
+drift from coordinator ownership. The observer generation guard prevents stale
+listener removal; the UI receives only immutable summaries.
+
+Regression coverage:
+UsbSessionObservationStore tests cover immediate snapshot delivery, replacement,
+generation-guarded clearing, and state retention. Manual-scan policy tests cover
+fresh chooser revalidation and generic Fastboot confirmation routing.
+
+Hardware validation:
+NOT YET VERIFIED
+```
+
 ## Out of scope
 
 Neither 6A5A nor 6A5B adds:

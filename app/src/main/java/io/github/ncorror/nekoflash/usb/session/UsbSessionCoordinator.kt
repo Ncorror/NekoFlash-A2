@@ -15,6 +15,7 @@ import io.github.ncorror.nekoflash.usb.android.AndroidUsbDescriptorMapper
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbDiagnosticStore
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbDiagnosticsZipExporter
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbSessionSnapshot
+import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector
 import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector.Candidate
 import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector.Mode
 import io.github.ncorror.nekoflash.usb.model.UsbDeviceDescriptor
@@ -49,6 +50,8 @@ class UsbSessionCoordinator(context: Context) {
     private var permissionRegistry = UsbPermissionPolicy.Registry()
     private var currentCandidate: Candidate? = null
     private var modeSwitchWatch: UsbSessionLifecyclePolicy.ModeSwitchWatch? = null
+    private val observationStore = UsbSessionObservationStore()
+    private var pendingManualConfirmation: PendingManualConfirmation? = null
 
     private val startupRunnable = Runnable { runStartupScan() }
     private val modeSwitchRunnable = Runnable { runModeSwitchTick() }
@@ -119,6 +122,8 @@ class UsbSessionCoordinator(context: Context) {
         permissionTimeouts.clear()
         permissionRegistry = UsbPermissionPolicy.Registry()
         currentCandidate = null
+        pendingManualConfirmation = null
+        observationStore.publish(UsbSessionObservation())
         val endedPermissionLease = activePermissionCallback?.generation
         activePermissionCallback = null
         unregisterReceiversSafely()
@@ -127,6 +132,94 @@ class UsbSessionCoordinator(context: Context) {
             "USB_COORDINATOR_STOPPED",
             "permissionLease=${endedPermissionLease ?: "none"}",
         )
+    }
+
+
+    /**
+     * Replaces the UI observer without transferring USB ownership out of this
+     * Application-scoped coordinator. The new listener receives the current
+     * immutable snapshot immediately.
+     */
+    fun replaceObservationListener(listener: (UsbSessionObservation) -> Unit): Long =
+        observationStore.replaceListener(listener)
+
+    /** Clears only the listener generation owned by the calling Activity. */
+    fun clearObservationListener(generation: Long) {
+        observationStore.clearListener(generation)
+    }
+
+    /**
+     * Legacy explicit Search parity: cancel stale schedulers and read deviceList
+     * exactly once for this button press. No retry timer is created.
+     */
+    fun refreshUsb(): UsbManualScanPrompt? {
+        if (!started) return null
+        cancelStartupScan()
+        stopModeSwitchWatch()
+        pendingManualConfirmation = null
+
+        val inventory = readUsbInventory()
+        val decision = UsbManualScanPolicy.decide(
+            current = currentCandidate,
+            devices = inventory.descriptors,
+        )
+        diagnostics.event(
+            "INFO",
+            "USB_MANUAL_SCAN",
+            "devices=${decision.physicalDeviceCount} candidates=${decision.compatibleCandidateCount}",
+        )
+        return handleManualDecision(decision, inventory)
+    }
+
+    /**
+     * Revalidates a chooser selection against one fresh device-list snapshot
+     * before the existing permission path may advance it.
+     */
+    fun chooseManualCandidate(stableKey: String): UsbManualScanPrompt? {
+        if (!started) return null
+        stopModeSwitchWatch()
+        pendingManualConfirmation = null
+
+        val inventory = readUsbInventory()
+        val decision = UsbManualScanPolicy.decideChosen(
+            stableKey = stableKey,
+            devices = inventory.descriptors,
+        )
+        if (decision == null) {
+            diagnostics.event("WARN", "USB_MANUAL_SELECTION_STALE", "stableKey=$stableKey")
+            publishInventoryState(inventory)
+            return null
+        }
+        diagnostics.event(
+            "INFO",
+            "USB_MANUAL_SELECTION_REVALIDATED",
+            "stableKey=$stableKey devices=${decision.physicalDeviceCount}",
+        )
+        return handleManualDecision(decision, inventory)
+    }
+
+    /** Continues only the coordinator-owned generic candidate awaiting confirmation. */
+    fun confirmManualGenericFastboot(stableKey: String) {
+        if (!started) return
+        stopModeSwitchWatch()
+        val pending = pendingManualConfirmation
+        if (pending == null || pending.candidate.stableKey != stableKey) {
+            diagnostics.event("WARN", "USB_MANUAL_GENERIC_CONFIRMATION_STALE", "stableKey=$stableKey")
+            return
+        }
+        pendingManualConfirmation = null
+        diagnostics.event("INFO", "USB_MANUAL_GENERIC_CONFIRMED", pending.candidate.summary())
+        requestAccess(
+            candidate = pending.candidate,
+            automatic = false,
+            observedDevice = pending.device,
+            physicalDeviceCount = pending.physicalDeviceCount,
+            compatibleCandidateCount = pending.compatibleCandidateCount,
+        )
+    }
+
+    fun cancelManualUsbPrompt() {
+        pendingManualConfirmation = null
     }
 
     private fun unregisterReceiversSafely() {
@@ -280,10 +373,29 @@ class UsbSessionCoordinator(context: Context) {
 
     private fun runStartupScan() {
         if (!started) return
-        val descriptors = currentUsbDevices().map(AndroidUsbDescriptorMapper::map)
-        val candidate = UsbSessionLifecyclePolicy.selectStartupCandidate(currentPhase(), descriptors)
+        val inventory = readUsbInventory()
+        val allCandidates = UsbInterfaceSelector.findAllCandidates(
+            devices = inventory.descriptors,
+            includeGenericFastboot = true,
+        )
+        val candidate = UsbSessionLifecyclePolicy.selectStartupCandidate(
+            currentPhase(),
+            inventory.descriptors,
+        )
         if (candidate == null) {
-            diagnostics.event("INFO", "USB_STARTUP_SCAN_NO_UNIQUE_CANDIDATE", "devices=${descriptors.size}")
+            diagnostics.event(
+                "INFO",
+                "USB_STARTUP_SCAN_NO_UNIQUE_CANDIDATE",
+                "devices=${inventory.descriptors.size} candidates=${allCandidates.size}",
+            )
+            if (currentCandidate == null) {
+                publishInventoryState(inventory, allCandidates.size)
+            } else {
+                publishCurrentCandidateReady(
+                    physicalDeviceCount = inventory.devices.size,
+                    compatibleCandidateCount = allCandidates.size,
+                )
+            }
             return
         }
         diagnostics.event("INFO", "USB_STARTUP_CANDIDATE", candidate.summary())
@@ -295,7 +407,13 @@ class UsbSessionCoordinator(context: Context) {
             )
             stopModeSwitchWatch()
         }
-        requestAccess(candidate, automatic = true)
+        requestAccess(
+            candidate = candidate,
+            automatic = true,
+            observedDevice = inventory.deviceFor(candidate),
+            physicalDeviceCount = inventory.devices.size,
+            compatibleCandidateCount = allCandidates.size,
+        )
     }
 
     private fun handleAttached(device: UsbDevice) {
@@ -313,17 +431,39 @@ class UsbSessionCoordinator(context: Context) {
         val candidate = decision.candidate
         if (candidate == null) {
             diagnostics.event("WARN", "USB_ATTACHED_NO_CANDIDATE")
+            if (currentCandidate == null) {
+                observationStore.publish(
+                    UsbSessionObservation(
+                        status = UsbSessionObservation.Status.UNSUPPORTED_DEVICE,
+                        physicalDeviceCount = 1,
+                        compatibleCandidateCount = 0,
+                    ),
+                )
+            }
             return
         }
-        requestAccess(candidate, automatic = true)
+        requestAccess(
+            candidate = candidate,
+            automatic = true,
+            observedDevice = device,
+            physicalDeviceCount = 1,
+            compatibleCandidateCount = 1,
+        )
     }
 
-    private fun requestAccess(candidate: Candidate, automatic: Boolean) {
+    private fun requestAccess(
+        candidate: Candidate,
+        automatic: Boolean,
+        observedDevice: UsbDevice?,
+        physicalDeviceCount: Int,
+        compatibleCandidateCount: Int,
+    ) {
         if (!started) return
         val permissionAction = activePermissionCallback?.action ?: return
-        val device = findCurrentDevice(candidate.device)
+        val device = observedDevice
         if (device == null) {
             diagnostics.event("WARN", "USB_CANDIDATE_DISAPPEARED", candidate.summary())
+            publishPermissionFailure(UsbSessionObservation.Status.PERMISSION_ERROR)
             return
         }
         val begin = UsbPermissionPolicy.beginAccess(
@@ -335,8 +475,20 @@ class UsbSessionCoordinator(context: Context) {
         permissionRegistry = begin.registry
 
         when (val action = begin.action) {
-            is UsbPermissionPolicy.Action.Connect -> acceptPermittedCandidate(action.candidate)
+            is UsbPermissionPolicy.Action.Connect -> acceptPermittedCandidate(
+                candidate = action.candidate,
+                physicalDeviceCount = physicalDeviceCount,
+                compatibleCandidateCount = compatibleCandidateCount,
+            )
             is UsbPermissionPolicy.Action.RequestPermission -> {
+                observationStore.publish(
+                    UsbSessionObservation(
+                        status = UsbSessionObservation.Status.PERMISSION_PENDING,
+                        physicalDeviceCount = physicalDeviceCount,
+                        compatibleCandidateCount = compatibleCandidateCount,
+                        candidate = action.candidate.toUsbCandidateSummary(),
+                    ),
+                )
                 diagnostics.event("INFO", "USB_PERMISSION_REQUESTED", action.candidate.summary())
                 schedulePermissionTimeout(device, action.timeoutMs)
                 val permissionIntent = Intent(permissionAction).setPackage(appContext.packageName)
@@ -379,12 +531,18 @@ class UsbSessionCoordinator(context: Context) {
                 diagnostics.event("INFO", "USB_PERMISSION_GRANTED", action.candidate.summary())
                 acceptPermittedCandidate(action.candidate)
             }
-            UsbPermissionPolicy.Action.PermissionDenied ->
+            UsbPermissionPolicy.Action.PermissionDenied -> {
                 diagnostics.event("WARN", "USB_PERMISSION_DENIED")
-            UsbPermissionPolicy.Action.MissingDevice ->
+                publishPermissionFailure(UsbSessionObservation.Status.PERMISSION_DENIED)
+            }
+            UsbPermissionPolicy.Action.MissingDevice -> {
                 diagnostics.event("ERROR", "USB_PERMISSION_RESULT_MISSING_DEVICE")
-            UsbPermissionPolicy.Action.NoCandidate ->
+                publishPermissionFailure(UsbSessionObservation.Status.PERMISSION_ERROR)
+            }
+            UsbPermissionPolicy.Action.NoCandidate -> {
                 diagnostics.event("WARN", "USB_PERMISSION_RESULT_NO_CANDIDATE")
+                publishPermissionFailure(UsbSessionObservation.Status.PERMISSION_ERROR)
+            }
             is UsbPermissionPolicy.Action.RequestPermission ->
                 error("resolvePermissionResult returned an impossible action")
         }
@@ -403,6 +561,7 @@ class UsbSessionCoordinator(context: Context) {
             permissionRegistry = result.registry
             if (result.shouldReportNoResponse) {
                 diagnostics.event("ERROR", "USB_PERMISSION_TIMEOUT", "deviceId=${device.deviceId}")
+                publishPermissionFailure(UsbSessionObservation.Status.PERMISSION_ERROR)
             } else {
                 diagnostics.event("INFO", "USB_PERMISSION_TIMEOUT_SUPPRESSED", "deviceId=${device.deviceId}")
             }
@@ -416,9 +575,14 @@ class UsbSessionCoordinator(context: Context) {
         handler.removeCallbacks(timeout)
     }
 
-    private fun acceptPermittedCandidate(candidate: Candidate) {
+    private fun acceptPermittedCandidate(
+        candidate: Candidate,
+        physicalDeviceCount: Int = observationStore.current().physicalDeviceCount,
+        compatibleCandidateCount: Int = observationStore.current().compatibleCandidateCount,
+    ) {
         if (currentCandidate?.stableKey == candidate.stableKey) {
             diagnostics.event("INFO", "USB_DUPLICATE_CANDIDATE_IGNORED", candidate.summary())
+            publishCurrentCandidateReady(physicalDeviceCount, compatibleCandidateCount)
             return
         }
         currentCandidate = candidate
@@ -436,6 +600,14 @@ class UsbSessionCoordinator(context: Context) {
             "USB_CANDIDATE_READY",
             "sessionId=$sessionId ${candidate.summary()} transport=not-opened",
         )
+        observationStore.publish(
+            UsbSessionObservation(
+                status = UsbSessionObservation.Status.CANDIDATE_READY,
+                physicalDeviceCount = physicalDeviceCount,
+                compatibleCandidateCount = compatibleCandidateCount,
+                candidate = candidate.toUsbCandidateSummary(),
+            ),
+        )
     }
 
     private fun handleDetached(device: UsbDevice) {
@@ -449,9 +621,24 @@ class UsbSessionCoordinator(context: Context) {
             "USB_DETACHED",
             "deviceId=${descriptor.deviceId} deviceName=${descriptor.deviceName} current=${decision.disconnectCurrent}",
         )
+        val pendingManual = pendingManualConfirmation
+        if (pendingManual != null && UsbSessionLifecyclePolicy.isCurrentDevice(
+                pendingManual.candidate.device,
+                descriptor,
+            )
+        ) {
+            pendingManualConfirmation = null
+        }
         if (!decision.disconnectCurrent) return
 
         currentCandidate = null
+        observationStore.publish(
+            UsbSessionObservation(
+                status = UsbSessionObservation.Status.SCANNING,
+                physicalDeviceCount = 0,
+                compatibleCandidateCount = 0,
+            ),
+        )
         val watch = decision.modeSwitchWatch ?: return
         startModeSwitchWatch(watch)
     }
@@ -475,23 +662,221 @@ class UsbSessionCoordinator(context: Context) {
     private fun runModeSwitchTick() {
         if (!started) return
         val watch = modeSwitchWatch ?: return
+        val inventory = readUsbInventory()
+        val allCandidates = UsbInterfaceSelector.findAllCandidates(
+            devices = inventory.descriptors,
+            includeGenericFastboot = true,
+        )
         val result = UsbSessionLifecyclePolicy.tickModeSwitch(
             watch = watch,
-            devices = currentUsbDevices().map(AndroidUsbDescriptorMapper::map),
+            devices = inventory.descriptors,
         )
         modeSwitchWatch = result.nextWatch
         val candidate = result.candidate
         if (candidate != null) {
             diagnostics.event("INFO", "USB_MODE_SWITCH_CANDIDATE", candidate.summary())
-            requestAccess(candidate, automatic = true)
+            requestAccess(
+                candidate = candidate,
+                automatic = true,
+                observedDevice = inventory.deviceFor(candidate),
+                physicalDeviceCount = inventory.devices.size,
+                compatibleCandidateCount = allCandidates.size,
+            )
             return
         }
         val delayMs = result.scheduleNextAfterMs
         if (delayMs != null && result.nextWatch != null) {
+            observationStore.publish(
+                UsbSessionObservation(
+                    status = UsbSessionObservation.Status.SCANNING,
+                    physicalDeviceCount = inventory.devices.size,
+                    compatibleCandidateCount = allCandidates.size,
+                ),
+            )
             handler.postDelayed(modeSwitchRunnable, delayMs)
         } else {
             diagnostics.event("INFO", "USB_MODE_SWITCH_WATCH_FINISHED")
+            publishInventoryState(inventory, allCandidates.size)
         }
+    }
+
+    private fun handleManualDecision(
+        decision: UsbManualScanDecision,
+        inventory: UsbInventorySnapshot,
+    ): UsbManualScanPrompt? = when (decision) {
+        is UsbManualScanDecision.NoCandidate -> {
+            diagnostics.event(
+                "ERROR",
+                "USB_MANUAL_SCAN_NO_COMPATIBLE",
+                "devices=${decision.physicalDeviceCount}",
+            )
+            publishManualInventoryForTroubleshooting(inventory)
+            publishInventoryState(inventory, compatibleCandidateCount = 0)
+            null
+        }
+
+        is UsbManualScanDecision.PreserveCurrent -> {
+            publishCurrentCandidateReady(
+                physicalDeviceCount = decision.physicalDeviceCount,
+                compatibleCandidateCount = decision.compatibleCandidateCount,
+            )
+            null
+        }
+
+        is UsbManualScanDecision.Select -> {
+            diagnostics.event("INFO", "USB_MANUAL_CANDIDATE_SELECTED", decision.candidate.summary())
+            val device = inventory.deviceFor(decision.candidate)
+            if (device == null) {
+                diagnostics.event(
+                    "WARN",
+                    "USB_MANUAL_SELECTION_DISAPPEARED",
+                    decision.candidate.summary(),
+                )
+                publishInventoryState(inventory)
+            } else {
+                requestAccess(
+                    candidate = decision.candidate,
+                    automatic = false,
+                    observedDevice = device,
+                    physicalDeviceCount = decision.physicalDeviceCount,
+                    compatibleCandidateCount = decision.compatibleCandidateCount,
+                )
+            }
+            null
+        }
+
+        is UsbManualScanDecision.ConfirmGenericFastboot -> {
+            diagnostics.event("INFO", "USB_MANUAL_CANDIDATE_SELECTED", decision.candidate.summary())
+            val device = inventory.deviceFor(decision.candidate)
+            if (device == null) {
+                diagnostics.event(
+                    "WARN",
+                    "USB_MANUAL_GENERIC_DISAPPEARED",
+                    decision.candidate.summary(),
+                )
+                publishInventoryState(inventory)
+                null
+            } else {
+                pendingManualConfirmation = PendingManualConfirmation(
+                    candidate = decision.candidate,
+                    device = device,
+                    physicalDeviceCount = decision.physicalDeviceCount,
+                    compatibleCandidateCount = decision.compatibleCandidateCount,
+                )
+                diagnostics.event(
+                    "INFO",
+                    "USB_MANUAL_GENERIC_CONFIRMATION_REQUIRED",
+                    decision.candidate.summary(),
+                )
+                UsbManualScanPrompt.ConfirmGenericFastboot(
+                    decision.candidate.toUsbCandidateSummary(),
+                )
+            }
+        }
+
+        is UsbManualScanDecision.Choose -> {
+            if (currentCandidate == null) {
+                observationStore.publish(
+                    UsbSessionObservation(
+                        status = UsbSessionObservation.Status.MULTIPLE_CANDIDATES,
+                        physicalDeviceCount = decision.physicalDeviceCount,
+                        compatibleCandidateCount = decision.compatibleCandidateCount,
+                    ),
+                )
+            } else {
+                publishCurrentCandidateReady(
+                    physicalDeviceCount = decision.physicalDeviceCount,
+                    compatibleCandidateCount = decision.compatibleCandidateCount,
+                )
+            }
+            UsbManualScanPrompt.Choose(decision.candidates.map(Candidate::toUsbCandidateSummary))
+        }
+    }
+
+    private fun publishManualInventoryForTroubleshooting(inventory: UsbInventorySnapshot) {
+        if (inventory.descriptors.isEmpty()) {
+            diagnostics.event("INFO", "USB_MANUAL_INVENTORY_EMPTY")
+            return
+        }
+        inventory.descriptors.forEach { descriptor ->
+            diagnostics.event(
+                "INFO",
+                "USB_MANUAL_INVENTORY_DEVICE",
+                descriptor.manualInventorySummary(),
+            )
+        }
+    }
+
+    private fun UsbDeviceDescriptor.manualInventorySummary(): String {
+        val interfaces = interfaces.joinToString(separator = ";") { usbInterface ->
+            val endpoints = usbInterface.endpoints.joinToString(separator = ",") { endpoint ->
+                "${endpoint.address}/${endpoint.direction.name}/${endpoint.transferType.name}/${endpoint.maxPacketSize}"
+            }
+            "${usbInterface.id}:${usbInterface.interfaceClass}/${usbInterface.interfaceSubclass}/" +
+                "${usbInterface.interfaceProtocol}[$endpoints]"
+        }
+        return "deviceId=$deviceId deviceName=$deviceName vid=$vendorId pid=$productId " +
+            "interfaces=${this.interfaces.size} descriptors=$interfaces"
+    }
+
+    private fun publishInventoryState(
+        inventory: UsbInventorySnapshot,
+        compatibleCandidateCount: Int = UsbInterfaceSelector.findAllCandidates(
+            devices = inventory.descriptors,
+            includeGenericFastboot = true,
+        ).size,
+    ) {
+        if (currentCandidate != null) {
+            publishCurrentCandidateReady(
+                physicalDeviceCount = inventory.devices.size,
+                compatibleCandidateCount = compatibleCandidateCount,
+            )
+            return
+        }
+        val status = when {
+            inventory.devices.isEmpty() -> UsbSessionObservation.Status.NO_DEVICE
+            compatibleCandidateCount == 0 -> UsbSessionObservation.Status.UNSUPPORTED_DEVICE
+            compatibleCandidateCount > 1 -> UsbSessionObservation.Status.MULTIPLE_CANDIDATES
+            // A single compatible descriptor can remain after a stale chooser
+            // selection or an exhausted mode-switch watch. It is compatible,
+            // but it is not the coordinator-owned detected generation.
+            else -> UsbSessionObservation.Status.NO_DEVICE
+        }
+        observationStore.publish(
+            UsbSessionObservation(
+                status = status,
+                physicalDeviceCount = inventory.devices.size,
+                compatibleCandidateCount = compatibleCandidateCount,
+            ),
+        )
+    }
+
+    private fun publishCurrentCandidateReady(
+        physicalDeviceCount: Int = observationStore.current().physicalDeviceCount,
+        compatibleCandidateCount: Int = observationStore.current().compatibleCandidateCount,
+    ) {
+        val candidate = currentCandidate ?: return
+        observationStore.publish(
+            UsbSessionObservation(
+                status = UsbSessionObservation.Status.CANDIDATE_READY,
+                physicalDeviceCount = physicalDeviceCount,
+                compatibleCandidateCount = compatibleCandidateCount,
+                candidate = candidate.toUsbCandidateSummary(),
+            ),
+        )
+    }
+
+    private fun publishPermissionFailure(status: UsbSessionObservation.Status) {
+        if (currentCandidate != null) {
+            publishCurrentCandidateReady()
+            return
+        }
+        observationStore.publish(
+            observationStore.current().copy(
+                status = status,
+                candidate = null,
+            ),
+        )
     }
 
     private fun currentPhase(): UsbSessionLifecyclePolicy.ConnectionPhase = when (currentCandidate?.mode) {
@@ -500,10 +885,13 @@ class UsbSessionCoordinator(context: Context) {
         null -> UsbSessionLifecyclePolicy.ConnectionPhase.NONE
     }
 
-    private fun currentUsbDevices(): Collection<UsbDevice> = usbManager.deviceList.values
-
-    private fun findCurrentDevice(descriptor: UsbDeviceDescriptor): UsbDevice? =
-        currentUsbDevices().firstOrNull { it.deviceId == descriptor.deviceId }
+    private fun readUsbInventory(): UsbInventorySnapshot {
+        val devices = usbManager.deviceList.values.toList()
+        return UsbInventorySnapshot(
+            devices = devices,
+            descriptors = devices.map(AndroidUsbDescriptorMapper::map),
+        )
+    }
 
     private fun hostSnapshot() = UsbSessionSnapshot.HostSnapshot(
         sdkInt = Build.VERSION.SDK_INT,
@@ -526,6 +914,26 @@ class UsbSessionCoordinator(context: Context) {
         @Suppress("DEPRECATION")
         getParcelableExtra(UsbManager.EXTRA_DEVICE)
     }
+
+    private data class UsbInventorySnapshot(
+        val devices: List<UsbDevice>,
+        val descriptors: List<UsbDeviceDescriptor>,
+    ) {
+        fun deviceFor(candidate: Candidate): UsbDevice? = devices.firstOrNull {
+            it.deviceId == candidate.device.deviceId && it.deviceName == candidate.device.deviceName
+        } ?: devices.firstOrNull {
+            it.deviceName == candidate.device.deviceName &&
+                it.vendorId == candidate.device.vendorId &&
+                it.productId == candidate.device.productId
+        }
+    }
+
+    private data class PendingManualConfirmation(
+        val candidate: Candidate,
+        val device: UsbDevice,
+        val physicalDeviceCount: Int,
+        val compatibleCandidateCount: Int,
+    )
 
     private companion object {
         const val EXTRA_USB_INTENT_CONSUMED = "nekoflash_a2_usb_intent_consumed"

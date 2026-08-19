@@ -43,11 +43,9 @@ sealed interface UsbManualScanDecision {
     }
 }
 
-sealed interface UsbManualScanResult {
-    data object Inactive : UsbManualScanResult
-    data object Completed : UsbManualScanResult
-    data class ConfirmGenericFastboot(val candidate: UsbCandidateSummary) : UsbManualScanResult
-    data class Choose(val candidates: List<UsbCandidateSummary>) : UsbManualScanResult
+sealed interface UsbManualScanPrompt {
+    data class ConfirmGenericFastboot(val candidate: UsbCandidateSummary) : UsbManualScanPrompt
+    data class Choose(val candidates: List<UsbCandidateSummary>) : UsbManualScanPrompt
 }
 
 /**
@@ -85,6 +83,22 @@ object UsbManualScanPolicy {
             )
         }
         return UsbManualScanDecision.NoCandidate(devices.size)
+    }
+
+    /**
+     * Revalidates a chooser selection against a fresh descriptor inventory.
+     * The UI supplies only the stable key from its immutable summary; the fresh
+     * Candidate object is reconstructed here before permission handling.
+     */
+    fun decideChosen(
+        stableKey: String,
+        devices: Collection<UsbDeviceDescriptor>,
+    ): UsbManualScanDecision? {
+        val candidate = UsbInterfaceSelector.findAllCandidates(
+            devices = devices,
+            includeGenericFastboot = true,
+        ).singleOrNull { it.stableKey == stableKey } ?: return null
+        return decideChosen(candidate, devices.size)
     }
 
     fun decideChosen(

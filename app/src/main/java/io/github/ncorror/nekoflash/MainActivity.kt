@@ -16,8 +16,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import io.github.ncorror.nekoflash.ui.entry.EntryGateScreen
 import io.github.ncorror.nekoflash.ui.home.HomeScreen
-import io.github.ncorror.nekoflash.ui.home.HomeUiState
 import io.github.ncorror.nekoflash.ui.theme.NekoFlashTheme
+import io.github.ncorror.nekoflash.usb.session.UsbManualScanPrompt
+import io.github.ncorror.nekoflash.usb.session.UsbSessionObservation
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -31,6 +32,9 @@ class MainActivity : ComponentActivity() {
         get() = app.usbSessionCoordinator
 
     private var usbUiEntryGeneration: Long? = null
+    private var usbObservationListenerGeneration: Long? = null
+    private var usbObservation by mutableStateOf(UsbSessionObservation())
+    private var usbManualScanPrompt by mutableStateOf<UsbManualScanPrompt?>(null)
     private var diagnosticsExportMessage by mutableStateOf<String?>(null)
     private var diagnosticsExportInProgress by mutableStateOf(false)
 
@@ -70,6 +74,7 @@ class MainActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, authorizedRootBackCallback)
         if (authorizedAtCreate) {
             usbSessionCoordinator.start()
+            bindUsbObservation()
             usbUiEntryGeneration = usbSessionCoordinator.onActivityCreated(intent)
         }
 
@@ -82,9 +87,14 @@ class MainActivity : ComponentActivity() {
             NekoFlashTheme {
                 if (authorized) {
                     HomeScreen(
-                        state = HomeUiState(),
+                        observation = usbObservation,
+                        manualScanPrompt = usbManualScanPrompt,
                         diagnosticsExportInProgress = diagnosticsExportInProgress,
                         diagnosticsExportMessage = diagnosticsExportMessage,
+                        onRefreshUsb = ::refreshUsb,
+                        onManualCandidateChosen = ::chooseManualCandidate,
+                        onConfirmGenericFastboot = ::confirmGenericFastboot,
+                        onDismissManualPrompt = ::dismissManualUsbPrompt,
                         onExportDiagnostics = ::requestDiagnosticsExport,
                     )
                 } else {
@@ -98,6 +108,7 @@ class MainActivity : ComponentActivity() {
                         onContinue = {
                             if (entrySessionGate.authorize(riskAccepted)) {
                                 usbSessionCoordinator.start()
+                                bindUsbObservation()
                                 usbUiEntryGeneration =
                                     usbSessionCoordinator.onEntryAuthorized(intent)
                                 errorResId = null
@@ -115,6 +126,32 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+
+    private fun bindUsbObservation() {
+        usbObservationListenerGeneration?.let(usbSessionCoordinator::clearObservationListener)
+        usbObservationListenerGeneration = usbSessionCoordinator.replaceObservationListener { observation ->
+            usbObservation = observation
+        }
+    }
+
+    private fun refreshUsb() {
+        usbManualScanPrompt = usbSessionCoordinator.refreshUsb()
+    }
+
+    private fun chooseManualCandidate(stableKey: String) {
+        usbManualScanPrompt = usbSessionCoordinator.chooseManualCandidate(stableKey)
+    }
+
+    private fun confirmGenericFastboot(stableKey: String) {
+        usbSessionCoordinator.confirmManualGenericFastboot(stableKey)
+        usbManualScanPrompt = null
+    }
+
+    private fun dismissManualUsbPrompt() {
+        usbSessionCoordinator.cancelManualUsbPrompt()
+        usbManualScanPrompt = null
     }
 
     private fun requestDiagnosticsExport() {
@@ -171,8 +208,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        usbSessionCoordinator.cancelManualUsbPrompt()
+        usbManualScanPrompt = null
         usbUiEntryGeneration?.let { usbSessionCoordinator.onActivityDestroyed(it) }
         usbUiEntryGeneration = null
+        usbObservationListenerGeneration?.let(usbSessionCoordinator::clearObservationListener)
+        usbObservationListenerGeneration = null
         if (!isChangingConfigurations) {
             entrySessionGate.endSession()
             usbSessionCoordinator.stop()
