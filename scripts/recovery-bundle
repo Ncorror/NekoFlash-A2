@@ -124,6 +124,9 @@ Checkpoint SHA-256: $checkpoint_sha
 Master prompt file: $MASTER_PROMPT
 Master prompt SHA-256: $master_prompt_sha
 Source archive: source/$source_archive
+GitHub artifact metadata: ci/artifacts.json
+GitHub artifact digest summary: ci/artifacts.txt
+Local evidence hashes: evidence/EVIDENCE_SHA256.txt when evidence files are supplied
 
 Evidence boundary:
 - Git/CI metadata in this bundle describes the exact HEAD above.
@@ -155,7 +158,10 @@ Restore in this order:
      `docs/LEGACY_BEHAVIOR_BASELINE.md` and `docs/USB_BEHAVIOR_CONTRACT.md`;
    - `docs/DEVELOPMENT_CHECKPOINT_TEMPORARY.md`;
    - the stage-specific contract named by the checkpoint.
-4. Inspect `ci/current-head.json`, `ci/current-head.txt`, and any files under `evidence/`.
+4. Inspect `ci/current-head.json`, `ci/current-head.txt`, `ci/artifacts.json`, `ci/artifacts.txt`, and any files under `evidence/`.
+   - Treat `digest` values in `ci/artifacts.json` as metadata for the original GitHub-hosted artifacts.
+   - Treat `evidence/EVIDENCE_SHA256.txt` and `SHA256SUMS.txt` as hashes of files actually bundled locally.
+   - Do not claim the local evidence ZIP is byte-identical to the original GitHub artifact unless its hash was captured before any unpack/repack step and matches the original artifact digest.
 5. Verify the live GitHub repository before relying on the snapshot as current:
    - identify current `main` HEAD without assuming it equals the bundled HEAD;
    - inspect every commit newer than the bundled HEAD, if any;
@@ -194,6 +200,46 @@ gh run list \
     --json databaseId,number,displayTitle,workflowName,status,conclusion,headSha,createdAt,updatedAt,url \
     > "$work_dir/ci/recent.json"
 
+echo "== Capture original GitHub artifact metadata and digests =="
+run_ids="$(gh run list \
+    --commit "$head_sha" \
+    --limit 10 \
+    --json databaseId \
+    --jq '.[].databaseId')"
+
+printf '[\n' > "$work_dir/ci/artifacts.json"
+: > "$work_dir/ci/artifacts.txt"
+first_run=1
+
+while IFS= read -r run_id; do
+    [ -n "$run_id" ] || continue
+
+    mismatch_count="$(gh api \
+        "repos/$EXPECTED_REPO/actions/runs/$run_id/artifacts?per_page=100" \
+        --jq "[.artifacts[] | select(.workflow_run.head_sha != \"$head_sha\")] | length")"
+    [ "$mismatch_count" = "0" ] || fail "artifact metadata for run $run_id does not match HEAD $head_sha"
+
+    [ "$first_run" -eq 1 ] || printf ',\n' >> "$work_dir/ci/artifacts.json"
+    gh api \
+        "repos/$EXPECTED_REPO/actions/runs/$run_id/artifacts?per_page=100" \
+        --jq "{run_id: $run_id, total_count: .total_count, artifacts: .artifacts}" \
+        >> "$work_dir/ci/artifacts.json"
+    first_run=0
+
+    gh api \
+        "repos/$EXPECTED_REPO/actions/runs/$run_id/artifacts?per_page=100" \
+        --jq '.artifacts[] | [.workflow_run.id, .workflow_run.head_sha, .id, .name, .digest, .size_in_bytes, .created_at, .expires_at, .expired] | @tsv' \
+        >> "$work_dir/ci/artifacts.txt"
+done <<< "$run_ids"
+printf '\n]\n' >> "$work_dir/ci/artifacts.json"
+
+if [ -s "$work_dir/ci/artifacts.txt" ]; then
+    artifact_lines="$(wc -l < "$work_dir/ci/artifacts.txt" | tr -d ' ')"
+    echo "Captured GitHub artifact records: $artifact_lines"
+else
+    echo "No GitHub Actions artifacts found for exact HEAD $head_sha." > "$work_dir/ci/artifacts.txt"
+fi
+
 if [ "$#" -gt 0 ]; then
     echo "== Add explicitly supplied evidence =="
     for evidence in "$@"; do
@@ -203,6 +249,13 @@ if [ "$#" -gt 0 ]; then
         cp -p "$evidence" "$dest"
         echo "Included evidence: $evidence"
     done
+
+    (
+        cd "$work_dir/evidence"
+        while IFS= read -r -d '' file; do
+            sha256sum "${file#./}"
+        done < <(find . -type f ! -name EVIDENCE_SHA256.txt -print0 | LC_ALL=C sort -z)
+    ) > "$work_dir/evidence/EVIDENCE_SHA256.txt"
 else
     rmdir "$work_dir/evidence"
 fi

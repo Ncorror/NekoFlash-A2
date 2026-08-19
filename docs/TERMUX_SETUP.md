@@ -107,9 +107,12 @@ The generated ZIP is written to `~/storage/downloads` by default and contains:
 - `PROJECT_STATE.txt` with repository, branch, HEAD, checkpoint identity, and hashes;
 - recent Git history and current Git status;
 - GitHub Actions metadata for the exact HEAD and recent runs;
+- `ci/artifacts.json` and `ci/artifacts.txt` with original GitHub artifact IDs, names, sizes, expiry metadata, and server-reported SHA-256 digests for exact-HEAD workflow runs;
 - `CHAT_RECOVERY_PROMPT.md` with the mandatory restore order for a new chat;
 - `SHA256SUMS.txt` covering every file inside the recovery bundle;
-- any explicitly supplied evidence files.
+- any explicitly supplied evidence files, plus `evidence/EVIDENCE_SHA256.txt` with hashes of those local evidence files.
+
+The GitHub artifact digest and the hash of a locally supplied evidence ZIP are intentionally recorded separately. A file downloaded with `gh run download` and then repacked is a new ZIP and is not assumed to be byte-identical to GitHub's original artifact archive.
 
 The helper refuses to create an official recovery bundle when the working tree is dirty or when local HEAD differs from `origin/<current-branch>`.
 This keeps every recovery ZIP tied to a reproducible Git state rather than an accidental local edit.
