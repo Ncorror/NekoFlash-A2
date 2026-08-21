@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">NekoFlash</string>
     <string name="home_heading">Device overview</string>
-    <string name="home_description">USB discovery stays separate from transport state. Stage 6B opens only the read-only ADB connection handshake; Fastboot remains unopened.</string>
+    <string name="home_description">USB discovery stays separate from transport state. Stage 6B opens ADB and runs only one fixed read-only identity probe; Fastboot remains unopened.</string>
     <string name="status_device">Device</string>
     <string name="status_mode">Mode</string>
     <string name="status_usb">USB</string>

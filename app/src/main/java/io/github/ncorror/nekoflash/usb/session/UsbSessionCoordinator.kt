@@ -734,10 +734,55 @@ class UsbSessionCoordinator(context: Context) {
                         "ADB_CONNECT_ENDED",
                         "generation=$generation success=true peerMode=${info.peerMode.name}",
                     )
+                    scheduleAdbReadOnlyProbe(generation, transport, info)
                 }
             }
         }
     }
+
+    private fun scheduleAdbReadOnlyProbe(
+        generation: Long,
+        transport: AdbUsbTransport,
+        info: AdbUsbTransport.ConnectionInfo,
+    ) {
+        when (info.peerMode) {
+            AdbUsbTransport.PeerMode.SIDELOAD,
+            AdbUsbTransport.PeerMode.UNKNOWN -> {
+                diagnostics.event(
+                    "INFO",
+                    "ADB_READ_ONLY_PROBE_SKIPPED",
+                    "generation=$generation peerMode=${info.peerMode.name}",
+                )
+                return
+            }
+
+            AdbUsbTransport.PeerMode.DEVICE,
+            AdbUsbTransport.PeerMode.RECOVERY -> Unit
+        }
+
+        adbTransportExecutor.execute {
+            if (!isActiveAdbTransport(generation, transport)) return@execute
+            val probe = transport.runProductDeviceReadOnlyProbe()
+            if (!isActiveAdbTransport(generation, transport)) {
+                diagnostics.event(
+                    "INFO",
+                    "ADB_READ_ONLY_PROBE_ABORTED",
+                    "generation=$generation activeTransportChanged=true",
+                )
+                return@execute
+            }
+            diagnostics.event(
+                if (probe.success) "INFO" else "ERROR",
+                "ADB_READ_ONLY_PROBE_RESULT",
+                "generation=$generation success=${probe.success} " +
+                    "value=${probe.value.orEmpty().take(200)} detail=${probe.detail.take(500)}",
+            )
+        }
+    }
+
+    private fun isActiveAdbTransport(generation: Long, transport: AdbUsbTransport): Boolean =
+        adbTransportGeneration.get() == generation &&
+            synchronized(adbTransportLock) { activeAdbTransport === transport }
 
     private fun stopAdbTransport(reason: String) {
         adbTransportGeneration.incrementAndGet()

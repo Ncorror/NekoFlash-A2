@@ -11,7 +11,7 @@
 > every durable invariant/evidence item that still matters has been moved into the
 > permanent behavior contracts and validation documentation.
 
-Last updated: **2026-08-19**
+Last updated: **2026-08-22**
 
 ## 0. Recovery card
 
@@ -23,12 +23,12 @@ Canonical repository:
 
 Latest reviewed A2 implementation/evidence commit:
 
-`828d6dab289d5c7715e15d604a50fa17af73bcff`
-`wire Stage 6A5B USB observation and manual refresh`
+`b2c1af49c251b78d5456911121b4db793cef7c57`
+`start Stage 6B ADB transport bring-up`
 
-This exact commit contains the executable Stage 6A5B implementation that was
-reviewed in CI and on real hardware. A later documentation-only checkpoint commit
-does not change that executable evidence boundary.
+This exact commit contains the reviewed Stage 6B1 ADB transport handshake/AUTH
+implementation and is backed by exact-head CI reports plus real-device diagnostics.
+The durable Stage 6B evidence record is `docs/ADB_TRANSPORT_STAGE6B.md`.
 
 Do not hard-code the commit that contains the current revision of this checkpoint.
 Resolve it from Git when resuming:
@@ -40,45 +40,53 @@ after the latest reviewed implementation/evidence commit before continuing devel
 
 Current completed implementation stage:
 
-**6A5B — Android USB observation wiring — CI-VERIFIED / HARDWARE-VERIFIED**
+**6B1 — ADB open/claim + CNXN/AUTH/banner/single-reader — CI-VERIFIED / HARDWARE-VERIFIED**
 
-Next implementation stage:
+Active implementation stage in the current development patch:
 
-**6B — ADB transport, read-only bring-up first — NOT STARTED**
+**6B2 — fixed read-only ADB service probe — NOT YET VERIFIED**
 
 Current transport boundary:
 
 - USB descriptor/discovery/lifecycle and UI observation/manual Refresh exist;
-- `CANDIDATE_READY` is not a protocol connection;
-- ADB transport: **NOT IMPLEMENTED**;
+- `CANDIDATE_READY` is still not a protocol connection;
+- ADB transport handshake/AUTH and the single-reader dispatcher are implemented and
+  hardware-verified at exact commit `b2c1af49...`;
+- the current 6B2 patch adds only the fixed `shell:getprop ro.product.device` stream
+  probe, with no generic shell/service API;
 - Fastboot transport: **NOT IMPLEMENTED**;
 - destructive A2 operations: **NOT IMPLEMENTED**.
 
 Latest reviewed CI evidence:
 
-- Android CI #33 / run ID `32290292423`;
-- exact commit: `828d6dab289d5c7715e15d604a50fa17af73bcff`;
-- 120/120 unit tests passed;
+- exact commit: `b2c1af49c251b78d5456911121b4db793cef7c57`;
+- reviewed reports: `NekoFlash-b2c1af49c251b78d5456911121b4db793cef7c57-reports.zip`;
+- reports SHA-256:
+  `8c2941d9b3991164a5963095abab856fa076f74686b424fca54908ab3a31b7ff`;
+- 124/124 unit tests passed;
 - failures/errors/skipped: 0/0/0;
-- Kotlin compiler warnings observed in captured logs: 0;
 - lint: 0 errors / 4 known baseline warnings;
 - `testDebugUnitTest`, `lintDebug`, and `assembleDebug`: success.
 
-Latest reviewed Stage 6A5B hardware evidence:
+Latest reviewed Stage 6B1 hardware evidence:
 
-- diagnostics: `NekoFlash-A2-diagnostics-20260819-193354Z.zip`;
-- exact-run debug APK SHA-256:
-  `ca29e88473da9c9d8b3636435588b06a7fb75caafd52045dfad54a492e308f14`;
-- Home observation, explicit Refresh, Activity recreation continuity, matching
-  detach clearing, reattach, descriptor parity, and the unopened transport
-  boundary: **PASS** for the Stage 6A5B scope.
+- diagnostics: `NekoFlash-A2-diagnostics-20260821-205805Z.zip`;
+- diagnostics SHA-256:
+  `343bbaa66ea63849fbc94a057bc0be3663475bbe274d0d204fb29f76aa464da0`;
+- successful connected screenshot: `7285.png`;
+- screenshot SHA-256:
+  `18bc6da792cb61580a7a6fcf90ee54ae014c0f55035ad3003e682ebfaaed0c59`;
+- four real ADB transport generations each produced exactly one `CNXN`, one
+  single-reader startup, and one connected banner;
+- first connection completed RSA signature + public-key authorization; later reconnects
+  reused the persisted key;
+- matching detach/reattach and duplicate manual Refresh behavior: PASS for this scope.
 
-Exact CI artifact digests and local evidence hashes are recorded in sections 5 and 9
-and in `docs/USB_OBSERVATION_STAGE6A5.md`.
-
-Hardware PASS is limited to the Stage 6A5B observation/manual-rescan/lifecycle
-invariants. It is not ADB transport, Fastboot transport, flashing, sideload,
-unlock, or destructive-operation validation.
+Hardware PASS is limited to Stage 6B1 open/claim, CNXN/AUTH, banner, single-reader,
+persisted-key reconnect, detach/reattach, and duplicate-Refresh invariants. The fixed
+6B2 read-only service probe is **NOT YET VERIFIED** until its own CI and hardware run.
+Fastboot, arbitrary shell/services, flashing, sideload operations, unlock, and destructive
+behavior remain outside the evidence boundary.
 
 Recovery order:
 
@@ -88,7 +96,7 @@ Recovery order:
 4. verify repository HEAD, checkpoint commit identity, and exact evidence hashes;
 5. inspect any commits newer than the latest reviewed implementation/evidence commit;
 6. resolve any conflict before changing code;
-7. continue only from the `Next implementation stage` recorded above.
+7. continue only from the active implementation stage recorded above.
 
 Do not use chat memory as the only source of project state.
 Do not create recursive checkpoint-only commits merely to record CI for an earlier
@@ -463,16 +471,17 @@ at the timestamp resolution used by the legacy logs.
 Legacy diagnostic evidence recorded no errors in that session and an
 `adb.connect` milestone of about `15 ms` for the last connection.
 
-A2 currently stops earlier:
+A2 Stage 6B1 now reproduces that transport sequence on real hardware at exact commit
+`b2c1af49c251b78d5456911121b4db793cef7c57`. Four reviewed transport generations
+each produced one `CNXN`, one reader startup, and one connected banner.
 
-`candidate -> Android permission -> CANDIDATE_READY -> transport=not-opened`
+`CANDIDATE_READY` still remains descriptor + permission state only and must never be
+presented as a real ADB/Fastboot protocol connection; ADB transport state is reported
+separately.
 
-Therefore `CANDIDATE_READY` must never be presented as a real ADB/Fastboot
-protocol connection.
+## 12. Critical ADB transport invariant
 
-## 12. Critical future ADB transport invariant
-
-When Stage 6B begins, preserve the hardware-proven legacy rule:
+Stage 6B preserves the hardware-proven legacy rule:
 
 **one transport, one CNXN**
 
@@ -483,11 +492,12 @@ Do not introduce automatic:
 Legacy records that close/reopen plus another CNXN caused detach/attach cycling
 on some Android USB hosts.
 
-The first A2 ADB transport migration should be as mechanical as possible:
+The first A2 ADB transport migration was kept mechanical:
 
 `openDevice -> claimInterface -> single CNXN -> AUTH -> banner -> single-reader dispatcher`
 
-No speculative retry/recovery should be added during that migration.
+This sequence is now hardware-verified at `b2c1af49...`. No speculative
+retry/recovery may be added during later stream/service migration.
 
 ## 13. Stage 6A5B parity gaps now closed
 
@@ -606,11 +616,10 @@ Verification status:
 - `assembleDebug`: **PASS**;
 - post-CI hardware retest on F7 -> X3 Pro: **PASS** for Stage 6A5B invariants.
 
-Explicitly still not implemented:
+Stage 6A5B itself still did not implement transport. That gap was closed later by
+Stage 6B1 at `b2c1af49...`. Still not implemented after the reviewed 6B1 boundary:
 
-- `UsbDeviceConnection.open`;
-- interface claim;
-- ADB CNXN/AUTH;
+- generic ADB shell/service execution;
 - Fastboot handshake;
 - background retry loops;
 - destructive operations.
@@ -618,24 +627,35 @@ Explicitly still not implemented:
 The permanent legacy-parity and platform-change record for this stage is
 `docs/USB_OBSERVATION_STAGE6A5.md`.
 
-## 16. Stage after observation parity: ADB transport
+## 16. Active Stage 6B2: fixed read-only ADB service probe
 
-Only after Stage 6A5B is CI-green and hardware-checked should A2 begin the real
-ADB transport migration.
+Stage 6B1 transport bring-up is CI-verified and hardware-verified for its narrow scope.
+The next migration slice stays read-only and adds only the legacy stream framing needed
+for one fixed identity query:
 
-First hardware validation for ADB transport must stay read-only.
+`shell:getprop ro.product.device`
 
-Examples:
+Expected stream sequence:
 
-- `get-state`
-- `getprop`
-- `id`
+`A_OPEN -> A_OKAY -> A_WRTE/A_OKAY -> A_CLSE/A_CLSE`
 
-No flashing/destructive work at this point.
+There is deliberately no generic `shell:` API in this slice. `SIDELOAD` and unknown
+peers do not receive the shell probe. Probe failure does not invent an automatic
+transport reopen/retry.
+
+Required verification order:
+
+1. exact-head CI (`testDebugUnitTest`, `lintDebug`, `assembleDebug`);
+2. real-device diagnostics showing stream open/WRTE/close and the expected read-only
+   value (for the current patient, expected `vayu`);
+3. detach/reconnect remains one transport / one CNXN;
+4. only then consider broader legacy ADB service migration.
+
+No Fastboot or flashing/destructive work at this point.
 
 ## 17. Fastboot and destructive ordering
 
-After read-only ADB transport is proven, bring up Fastboot read-only behavior.
+After the fixed read-only ADB service probe is CI-green and hardware-proven, bring up Fastboot read-only behavior.
 
 Initial read-only Fastboot probes should stay within known behavior, such as:
 

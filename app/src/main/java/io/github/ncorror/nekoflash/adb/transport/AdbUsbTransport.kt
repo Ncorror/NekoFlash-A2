@@ -8,14 +8,16 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import io.github.ncorror.nekoflash.adb.codec.AdbChecksum
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Stage 6B ADB USB bring-up copied mechanically from the pinned legacy transport contract.
  *
- * Scope is intentionally narrow: open/claim, exactly one CNXN, RSA AUTH, banner parsing and
- * the single-reader dispatcher. No ADB service is opened and no command is sent after CNXN.
- * The instance is one transport generation; failures never trigger reopen/retry here.
+ * Scope is intentionally narrow: open/claim, exactly one CNXN, RSA AUTH, banner parsing,
+ * the single-reader dispatcher, and one fixed read-only identity probe copied from the legacy
+ * stream framing. No generic shell API exists. The instance is one transport generation;
+ * failures never trigger reopen/retry here.
  */
 class AdbUsbTransport(
     private val usbManager: UsbManager,
@@ -30,6 +32,12 @@ class AdbUsbTransport(
         val remoteBanner: String,
         val peerMode: PeerMode,
         val features: Set<String>,
+    )
+
+    data class ReadOnlyProbeResult(
+        val success: Boolean,
+        val value: String?,
+        val detail: String,
     )
 
     enum class PeerMode {
@@ -60,6 +68,7 @@ class AdbUsbTransport(
     private val inboundHeaderBuffer = ByteArray(ADB_HEADER_SIZE)
     private val adbWriteLock = Any()
     private val dispatcherGeneration = AtomicLong(0L)
+    private val nextLocalStreamId = AtomicInteger(1)
 
     @Volatile
     private var closed = false
@@ -141,6 +150,107 @@ class AdbUsbTransport(
         } catch (error: Exception) {
             failConnect("ADB connection failed: ${error.message ?: error.javaClass.simpleName}")
         }
+    }
+
+    fun runProductDeviceReadOnlyProbe(): ReadOnlyProbeResult {
+        if (!isConnected) {
+            return ReadOnlyProbeResult(false, null, "ADB transport is not connected")
+        }
+        val dispatcher = packetDispatcher
+            ?: return ReadOnlyProbeResult(false, null, "ADB packet dispatcher is unavailable")
+        val localId = nextLocalStreamId.getAndIncrement().takeIf { it > 0 } ?: 1
+        val session = AdbReadOnlyStreamSession(localId)
+        val service = AdbReadOnlyStreamSession.READ_ONLY_SERVICE
+        event("ADB_READ_ONLY_PROBE_STARTED", "service=$service local=$localId")
+
+        return try {
+            sendOutbound(session.openRequest())
+            event("ADB_STREAM_OPEN_SENT", "service=$service local=$localId")
+            val deadlineNs = System.nanoTime() + READ_ONLY_PROBE_TOTAL_TIMEOUT_MS * 1_000_000L
+            while (!closed) {
+                val remainingMs = ((deadlineNs - System.nanoTime()) / 1_000_000L)
+                    .coerceAtMost(READ_ONLY_PROBE_PACKET_TIMEOUT_MS.toLong())
+                    .toInt()
+                if (remainingMs <= 0) {
+                    session.timeoutClosePacket()?.let(::sendOutboundSafely)
+                    val detail = "read-only probe timed out service=$service"
+                    event("ADB_READ_ONLY_PROBE_FAILED", detail)
+                    return ReadOnlyProbeResult(false, null, detail)
+                }
+
+                val packet = dispatcher.take(remainingMs)
+                if (packet == null) {
+                    val snapshot = dispatcher.snapshot()
+                    if (!snapshot.running) {
+                        val detail = snapshot.lastFailureMessage
+                            ?: "ADB packet dispatcher stopped during read-only probe"
+                        event("ADB_READ_ONLY_PROBE_FAILED", detail)
+                        return ReadOnlyProbeResult(false, null, detail)
+                    }
+                    continue
+                }
+
+                val step = session.consume(packet)
+                step.outbound.forEach(::sendOutbound)
+                when (step.transition) {
+                    AdbReadOnlyStreamSession.Transition.OPENED ->
+                        event("ADB_STREAM_OPENED", step.detail)
+
+                    AdbReadOnlyStreamSession.Transition.DATA ->
+                        event("ADB_STREAM_DATA", step.detail)
+
+                    AdbReadOnlyStreamSession.Transition.EARLY_DATA_IGNORED ->
+                        event("ADB_STREAM_EARLY_DATA", step.detail)
+
+                    AdbReadOnlyStreamSession.Transition.STALE_PACKET ->
+                        event("ADB_STREAM_STALE_PACKET", step.detail)
+
+                    AdbReadOnlyStreamSession.Transition.UNEXPECTED_PACKET ->
+                        event("ADB_STREAM_UNEXPECTED_PACKET", step.detail)
+
+                    AdbReadOnlyStreamSession.Transition.FAILED -> {
+                        val detail = "service=$service ${step.detail}"
+                        event("ADB_READ_ONLY_PROBE_FAILED", detail)
+                        return ReadOnlyProbeResult(false, null, detail)
+                    }
+
+                    AdbReadOnlyStreamSession.Transition.COMPLETED -> {
+                        val rawOutput = session.outputText()
+                        val value = rawOutput
+                            .replace("\r", "")
+                            .lineSequence()
+                            .map(String::trim)
+                            .firstOrNull(String::isNotEmpty)
+                        if (value == null) {
+                            val detail = "service=$service returned empty output"
+                            event("ADB_READ_ONLY_PROBE_FAILED", detail)
+                            return ReadOnlyProbeResult(false, null, detail)
+                        }
+                        val safeValue = value.take(READ_ONLY_PROBE_VALUE_LIMIT)
+                        event(
+                            "ADB_READ_ONLY_PROBE_SUCCESS",
+                            "service=$service value=$safeValue bytes=${rawOutput.toByteArray().size}",
+                        )
+                        return ReadOnlyProbeResult(true, safeValue, "read-only probe completed")
+                    }
+                }
+            }
+
+            ReadOnlyProbeResult(false, null, "ADB transport closed during read-only probe")
+        } catch (error: Exception) {
+            session.timeoutClosePacket()?.let(::sendOutboundSafely)
+            val detail = "service=$service error=${error.message ?: error.javaClass.simpleName}"
+            event("ADB_READ_ONLY_PROBE_FAILED", detail)
+            ReadOnlyProbeResult(false, null, detail)
+        }
+    }
+
+    private fun sendOutbound(packet: AdbReadOnlyStreamSession.OutboundPacket) {
+        sendMessage(packet.command, packet.arg0, packet.arg1, packet.payload)
+    }
+
+    private fun sendOutboundSafely(packet: AdbReadOnlyStreamSession.OutboundPacket) {
+        runCatching { sendOutbound(packet) }
     }
 
     fun close() {
@@ -564,6 +674,9 @@ class AdbUsbTransport(
         private const val AUTH_SIGNATURE_TIMEOUT_MS = 10_000
         private const val AUTH_PUBLIC_KEY_TIMEOUT_MS = 60_000
         private const val AUTH_RESPONSE_LIMIT = 12
+        private const val READ_ONLY_PROBE_PACKET_TIMEOUT_MS = 10_000
+        private const val READ_ONLY_PROBE_TOTAL_TIMEOUT_MS = 30_000L
+        private const val READ_ONLY_PROBE_VALUE_LIMIT = 200
         private const val LOCAL_ADB_VERSION = AdbChecksum.VERSION_WITH_CHECKSUM
         private val EMPTY_PAYLOAD = ByteArray(0)
     }

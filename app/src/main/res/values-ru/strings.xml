@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">NekoFlash</string>
     <string name="home_heading">Обзор устройства</string>
-    <string name="home_description">USB-обнаружение отделено от состояния транспорта. На этапе 6B открывается только read-only рукопожатие ADB; Fastboot остаётся закрытым.</string>
+    <string name="home_description">USB-обнаружение отделено от состояния транспорта. На этапе 6B ADB открывается только для одного фиксированного read-only запроса идентификации; Fastboot остаётся закрытым.</string>
     <string name="status_device">Устройство</string>
     <string name="status_mode">Режим</string>
     <string name="status_usb">USB</string>
