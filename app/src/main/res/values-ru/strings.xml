@@ -2,11 +2,12 @@
 <resources>
     <string name="app_name">NekoFlash</string>
     <string name="home_heading">Обзор устройства</string>
-    <string name="home_description">USB-обнаружение отделено от состояния транспорта. На этапе 6B ADB открывается только для одного фиксированного read-only запроса идентификации; Fastboot остаётся закрытым.</string>
+    <string name="home_description">USB-обнаружение отделено от состояния транспорта. ADB остаётся ограничен фиксированным read-only запросом идентификации; Fastboot теперь открывается только для одной фиксированной read-only проверки getvar:product.</string>
     <string name="status_device">Устройство</string>
     <string name="status_mode">Режим</string>
     <string name="status_usb">USB</string>
     <string name="status_adb">Транспорт ADB</string>
+    <string name="status_fastboot">Транспорт Fastboot</string>
     <string name="device_not_detected">Устройство не обнаружено</string>
     <string name="usb_status_inactive">Неактивно</string>
     <string name="usb_status_scanning">Поиск</string>
@@ -29,6 +30,11 @@
     <string name="adb_peer_recovery">recovery</string>
     <string name="adb_peer_sideload">sideload</string>
     <string name="adb_peer_unknown">неизвестный режим</string>
+    <string name="fastboot_status_inactive">Не активен</string>
+    <string name="fastboot_status_connecting">Проверка подключения</string>
+    <string name="fastboot_status_connected_product">Подключено · %1$s</string>
+    <string name="fastboot_status_connected_peer">Подключено · Fastboot peer</string>
+    <string name="fastboot_status_error">Ошибка подключения · обновите USB для повтора</string>
     <string name="usb_choose_title">Выберите USB-устройство</string>
     <string name="usb_candidate_details">%1$s · интерфейс %2$d</string>
     <string name="usb_generic_fastboot_title">Неподтверждённый USB-интерфейс</string>

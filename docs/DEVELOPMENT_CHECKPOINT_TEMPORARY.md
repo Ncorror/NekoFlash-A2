@@ -23,12 +23,12 @@ Canonical repository:
 
 Latest reviewed A2 implementation/evidence commit:
 
-`b2c1af49c251b78d5456911121b4db793cef7c57`
-`start Stage 6B ADB transport bring-up`
+`f31a2362384d61ce60268fa6058cdbe94fe2d3e9`
+`add fixed read-only ADB stream probe`
 
-This exact commit contains the reviewed Stage 6B1 ADB transport handshake/AUTH
-implementation and is backed by exact-head CI reports plus real-device diagnostics.
-The durable Stage 6B evidence record is `docs/ADB_TRANSPORT_STAGE6B.md`.
+This exact commit contains the reviewed Stage 6B2 fixed read-only ADB service probe and
+is backed by exact-head CI reports plus real-device diagnostics. The durable Stage 6B
+evidence record is `docs/ADB_TRANSPORT_STAGE6B.md`.
 
 Do not hard-code the commit that contains the current revision of this checkpoint.
 Resolve it from Git when resuming:
@@ -40,53 +40,57 @@ after the latest reviewed implementation/evidence commit before continuing devel
 
 Current completed implementation stage:
 
-**6B1 — ADB open/claim + CNXN/AUTH/banner/single-reader — CI-VERIFIED / HARDWARE-VERIFIED**
+**6B2 — fixed read-only ADB service probe — CI-VERIFIED / HARDWARE-VERIFIED**
 
 Active implementation stage in the current development patch:
 
-**6B2 — fixed read-only ADB service probe — NOT YET VERIFIED**
+**Fastboot read-only bring-up — fixed `getvar:product` qualification — NOT YET VERIFIED**
 
 Current transport boundary:
 
 - USB descriptor/discovery/lifecycle and UI observation/manual Refresh exist;
 - `CANDIDATE_READY` is still not a protocol connection;
-- ADB transport handshake/AUTH and the single-reader dispatcher are implemented and
-  hardware-verified at exact commit `b2c1af49...`;
-- the current 6B2 patch adds only the fixed `shell:getprop ro.product.device` stream
-  probe, with no generic shell/service API;
-- Fastboot transport: **NOT IMPLEMENTED**;
+- ADB transport handshake/AUTH, single-reader dispatcher, and the fixed
+  `shell:getprop ro.product.device` stream probe are hardware-verified through exact
+  commit `f31a2362...`;
+- there is still no generic ADB shell/service API;
+- the current development patch adds only Fastboot open/claim plus one fixed read-only
+  `getvar:product` peer qualification;
 - destructive A2 operations: **NOT IMPLEMENTED**.
 
 Latest reviewed CI evidence:
 
-- exact commit: `b2c1af49c251b78d5456911121b4db793cef7c57`;
-- reviewed reports: `NekoFlash-b2c1af49c251b78d5456911121b4db793cef7c57-reports.zip`;
+- exact commit: `f31a2362384d61ce60268fa6058cdbe94fe2d3e9`;
+- reviewed reports: `NekoFlash-f31a2362384d61ce60268fa6058cdbe94fe2d3e9-reports.zip`;
 - reports SHA-256:
-  `8c2941d9b3991164a5963095abab856fa076f74686b424fca54908ab3a31b7ff`;
-- 124/124 unit tests passed;
+  `3be0fe3a91d653b68e630bb83d140c10a36462ad0d8b93e5fc851731ddb70dc2`;
+- 130/130 unit tests passed;
 - failures/errors/skipped: 0/0/0;
 - lint: 0 errors / 4 known baseline warnings;
 - `testDebugUnitTest`, `lintDebug`, and `assembleDebug`: success.
 
-Latest reviewed Stage 6B1 hardware evidence:
+Latest reviewed Stage 6B2 hardware evidence:
 
-- diagnostics: `NekoFlash-A2-diagnostics-20260821-205805Z.zip`;
+- primary cumulative diagnostics: `NekoFlash-A2-diagnostics-20260821-212541Z.zip`;
 - diagnostics SHA-256:
-  `343bbaa66ea63849fbc94a057bc0be3663475bbe274d0d204fb29f76aa464da0`;
-- successful connected screenshot: `7285.png`;
+  `be13d4ff50668ce15618bc587950ff177eebc710256e6e55381bbfb44bb809a8`;
+- first successful-probe diagnostics: `NekoFlash-A2-diagnostics-20260821-212454Z.zip`;
+- first-probe SHA-256:
+  `f7728965d33768bb14e0e5f939abc4d981a87d13416a68ce13984ae8d64de581`;
+- successful connected screenshot: `7299.png`;
 - screenshot SHA-256:
-  `18bc6da792cb61580a7a6fcf90ee54ae014c0f55035ad3003e682ebfaaed0c59`;
-- four real ADB transport generations each produced exactly one `CNXN`, one
-  single-reader startup, and one connected banner;
-- first connection completed RSA signature + public-key authorization; later reconnects
-  reused the persisted key;
-- matching detach/reattach and duplicate manual Refresh behavior: PASS for this scope.
+  `f0005dd54217b5664aec43d58278bc8a5ac9b3815cc1193f720ed80364844a26`;
+- fixed `shell:getprop ro.product.device` returned exactly `vayu` on two physical ADB
+  generations;
+- both generations completed the expected `A_OPEN -> A_OKAY -> A_WRTE/A_OKAY ->
+  A_CLSE/A_CLSE` stream lifecycle;
+- the intervening detach closed the first transport, and manual Refresh while the second
+  transport was healthy produced `USB_DUPLICATE_CANDIDATE_IGNORED` without duplicating
+  the transport or stream probe.
 
-Hardware PASS is limited to Stage 6B1 open/claim, CNXN/AUTH, banner, single-reader,
-persisted-key reconnect, detach/reattach, and duplicate-Refresh invariants. The fixed
-6B2 read-only service probe is **NOT YET VERIFIED** until its own CI and hardware run.
-Fastboot, arbitrary shell/services, flashing, sideload operations, unlock, and destructive
-behavior remain outside the evidence boundary.
+Hardware PASS now covers Stage 6B1 plus the fixed Stage 6B2 read-only stream probe only.
+Arbitrary ADB shell/services, recovery ADB, Fastboot transport, flashing, sideload
+operations, unlock, and destructive behavior remain outside the evidence boundary.
 
 Recovery order:
 
@@ -627,46 +631,48 @@ Stage 6B1 at `b2c1af49...`. Still not implemented after the reviewed 6B1 boundar
 The permanent legacy-parity and platform-change record for this stage is
 `docs/USB_OBSERVATION_STAGE6A5.md`.
 
-## 16. Active Stage 6B2: fixed read-only ADB service probe
+## 16. Completed Stage 6B2: fixed read-only ADB service probe
 
-Stage 6B1 transport bring-up is CI-verified and hardware-verified for its narrow scope.
-The next migration slice stays read-only and adds only the legacy stream framing needed
-for one fixed identity query:
+Stage 6B2 at exact commit `f31a2362384d61ce60268fa6058cdbe94fe2d3e9` is now
+CI-verified and hardware-verified for one fixed identity query only:
 
 `shell:getprop ro.product.device`
 
-Expected stream sequence:
+Exact-head CI passed 130/130 tests, lint with 0 errors / 4 known warnings, and
+`assembleDebug`. Real-device diagnostics on the POCO X3 Pro patient observed the
+expected stream sequence and returned exactly `vayu` twice across a physical
+detach/reconnect cycle. See `docs/ADB_TRANSPORT_STAGE6B.md` for hashes and detailed
+evidence.
 
-`A_OPEN -> A_OKAY -> A_WRTE/A_OKAY -> A_CLSE/A_CLSE`
+There is still deliberately no generic `shell:` API. `SIDELOAD` and unknown peers do
+not receive the probe, and probe failure does not create an automatic transport retry.
 
-There is deliberately no generic `shell:` API in this slice. `SIDELOAD` and unknown
-peers do not receive the shell probe. Probe failure does not invent an automatic
-transport reopen/retry.
+## 17. Active Fastboot read-only bring-up and destructive ordering
 
-Required verification order:
+The next allowed transport slice is read-only Fastboot qualification. The current patch
+implements only:
 
-1. exact-head CI (`testDebugUnitTest`, `lintDebug`, `assembleDebug`);
-2. real-device diagnostics showing stream open/WRTE/close and the expected read-only
-   value (for the current patient, expected `vayu`);
-3. detach/reconnect remains one transport / one CNXN;
-4. only then consider broader legacy ADB service migration.
+`candidate -> permission -> openDevice -> claimInterface -> settle 350 ms ->
+getvar:product -> Fastboot response -> qualified peer`
 
-No Fastboot or flashing/destructive work at this point.
+The implementation is mechanically constrained by supplied legacy
+`FastbootProtocol.connect()`, `qualifyConnection()`, `getVar()`, and
+`readGetVarResponse()` behavior. See `docs/FASTBOOT_TRANSPORT_READ_ONLY.md`.
 
-## 17. Fastboot and destructive ordering
+Initial hardware proof after exact-head CI must use manual entry into Fastboot and only
+observe the fixed `getvar:product` qualification. The broader known read-only getvars
+remain future work, including:
 
-After the fixed read-only ADB service probe is CI-green and hardware-proven, bring up Fastboot read-only behavior.
-
-Initial read-only Fastboot probes should stay within known behavior, such as:
-
-- `getvar:product`
 - `getvar:current-slot`
 - `getvar:slot-count`
 - `getvar:unlocked`
 - `getvar:max-download-size`
 
 A generic/compatible Fastboot descriptor match is only a candidate until a real
-Fastboot protocol exchange confirms the peer.
+Fastboot protocol exchange confirms the peer. Legacy automatic attach/startup/mode-switch
+may pass a single generic fallback into that protocol qualification; explicit manual
+Search/chooser selection of a generic Fastboot fallback still requires the existing user
+warning/confirmation before permission/access.
 
 Destructive validation remains last:
 

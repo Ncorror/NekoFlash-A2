@@ -26,6 +26,7 @@ import io.github.ncorror.nekoflash.ui.components.StatusTone
 import io.github.ncorror.nekoflash.ui.theme.NekoFlashSpacing
 import io.github.ncorror.nekoflash.usb.session.AdbObservedPeerMode
 import io.github.ncorror.nekoflash.usb.session.AdbTransportObservation
+import io.github.ncorror.nekoflash.usb.session.FastbootTransportObservation
 import io.github.ncorror.nekoflash.usb.session.UsbCandidateSummary
 import io.github.ncorror.nekoflash.usb.session.UsbManualScanPrompt
 import io.github.ncorror.nekoflash.usb.session.UsbObservedMode
@@ -74,6 +75,15 @@ fun HomeScreen(
             label = stringResource(R.string.status_adb),
             value = observation.adbTransport.localizedLabel(),
             tone = if (observation.adbTransport.status == AdbTransportObservation.Status.CONNECTED) {
+                StatusTone.Positive
+            } else {
+                StatusTone.Neutral
+            },
+        ),
+        HomeStatusItem(
+            label = stringResource(R.string.status_fastboot),
+            value = observation.fastbootTransport.localizedLabel(),
+            tone = if (observation.fastbootTransport.status == FastbootTransportObservation.Status.CONNECTED) {
                 StatusTone.Positive
             } else {
                 StatusTone.Neutral
@@ -280,4 +290,16 @@ private fun AdbObservedPeerMode?.localizedLabel(): String = when (this) {
     AdbObservedPeerMode.RECOVERY -> stringResource(R.string.adb_peer_recovery)
     AdbObservedPeerMode.SIDELOAD -> stringResource(R.string.adb_peer_sideload)
     AdbObservedPeerMode.UNKNOWN, null -> stringResource(R.string.adb_peer_unknown)
+}
+
+@Composable
+private fun FastbootTransportObservation.localizedLabel(): String = when (status) {
+    FastbootTransportObservation.Status.INACTIVE -> stringResource(R.string.fastboot_status_inactive)
+    FastbootTransportObservation.Status.CONNECTING -> stringResource(R.string.fastboot_status_connecting)
+    FastbootTransportObservation.Status.ERROR -> stringResource(R.string.fastboot_status_error)
+    FastbootTransportObservation.Status.CONNECTED -> if (product.isNullOrBlank()) {
+        stringResource(R.string.fastboot_status_connected_peer)
+    } else {
+        stringResource(R.string.fastboot_status_connected_product, product)
+    }
 }

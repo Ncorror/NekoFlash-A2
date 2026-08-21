@@ -2,11 +2,12 @@
 <resources>
     <string name="app_name">NekoFlash</string>
     <string name="home_heading">Device overview</string>
-    <string name="home_description">USB discovery stays separate from transport state. Stage 6B opens ADB and runs only one fixed read-only identity probe; Fastboot remains unopened.</string>
+    <string name="home_description">USB discovery stays separate from transport state. ADB remains limited to the fixed read-only identity probe; Fastboot now opens only for one fixed read-only getvar:product qualification.</string>
     <string name="status_device">Device</string>
     <string name="status_mode">Mode</string>
     <string name="status_usb">USB</string>
     <string name="status_adb">ADB transport</string>
+    <string name="status_fastboot">Fastboot transport</string>
     <string name="device_not_detected">No device detected</string>
     <string name="usb_status_inactive">Inactive</string>
     <string name="usb_status_scanning">Scanning</string>
@@ -29,6 +30,11 @@
     <string name="adb_peer_recovery">recovery</string>
     <string name="adb_peer_sideload">sideload</string>
     <string name="adb_peer_unknown">unknown mode</string>
+    <string name="fastboot_status_inactive">Not active</string>
+    <string name="fastboot_status_connecting">Qualifying connection</string>
+    <string name="fastboot_status_connected_product">Connected · %1$s</string>
+    <string name="fastboot_status_connected_peer">Connected · Fastboot peer</string>
+    <string name="fastboot_status_error">Connection failed · Refresh USB to retry</string>
     <string name="usb_choose_title">Choose USB device</string>
     <string name="usb_candidate_details">%1$s · interface %2$d</string>
     <string name="usb_generic_fastboot_title">Unverified USB interface</string>

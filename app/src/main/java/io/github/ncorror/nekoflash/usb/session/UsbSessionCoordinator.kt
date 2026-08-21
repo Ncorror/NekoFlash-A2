@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import io.github.ncorror.nekoflash.adb.transport.AdbUsbTransport
+import io.github.ncorror.nekoflash.fastboot.transport.FastbootUsbTransport
 import io.github.ncorror.nekoflash.usb.android.AndroidUsbDescriptorMapper
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbDiagnosticStore
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbDiagnosticsZipExporter
@@ -28,8 +29,9 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Application-scoped owner of Android USB discovery, permission and re-enumeration.
  *
- * Stage 6B opens ADB only after descriptor selection and Android permission. Fastboot
- * transport remains intentionally unopened. ADB retries are manual-only after failure.
+ * Stage 6B opens ADB only after descriptor selection and Android permission. The first
+ * post-6B Fastboot slice opens Fastboot only for fixed read-only `getvar:product`
+ * qualification. Transport retries remain manual-only after failure.
  */
 class UsbSessionCoordinator(context: Context) {
     private val appContext = context.applicationContext
@@ -47,6 +49,11 @@ class UsbSessionCoordinator(context: Context) {
         Thread(runnable, "NekoFlash-ADB-Connect").apply { isDaemon = true }
     }
     private val adbTransportLock = Any()
+    private val fastbootTransportGeneration = AtomicLong(0L)
+    private val fastbootTransportExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "NekoFlash-Fastboot-Connect").apply { isDaemon = true }
+    }
+    private val fastbootTransportLock = Any()
 
     private var started = false
     private var activePermissionCallback: UsbPermissionCallbackIdentity.Callback? = null
@@ -59,7 +66,9 @@ class UsbSessionCoordinator(context: Context) {
     private val observationStore = UsbSessionObservationStore()
     private var pendingManualConfirmation: PendingManualConfirmation? = null
     @Volatile private var activeAdbTransport: AdbUsbTransport? = null
+    @Volatile private var activeFastbootTransport: FastbootUsbTransport? = null
     private var failedAdbStableKey: String? = null
+    private var failedFastbootStableKey: String? = null
 
     private val startupRunnable = Runnable { runStartupScan() }
     private val modeSwitchRunnable = Runnable { runModeSwitchTick() }
@@ -127,6 +136,7 @@ class UsbSessionCoordinator(context: Context) {
         permissionTimeouts.clear()
         permissionRegistry = UsbPermissionPolicy.Registry()
         stopAdbTransport("coordinator_stop")
+        stopFastbootTransport("coordinator_stop")
         currentCandidate = null
         pendingManualConfirmation = null
         observationStore.publish(UsbSessionObservation())
@@ -595,24 +605,36 @@ class UsbSessionCoordinator(context: Context) {
         compatibleCandidateCount: Int = observationStore.current().compatibleCandidateCount,
     ) {
         if (currentCandidate?.stableKey == candidate.stableKey) {
-            if (
+            when {
                 candidate.mode == Mode.ADB &&
-                !automatic &&
-                failedAdbStableKey == candidate.stableKey &&
-                observedDevice != null
-            ) {
-                diagnostics.event("INFO", "ADB_MANUAL_RETRY", candidate.summary())
-                startAdbTransport(candidate, observedDevice, physicalDeviceCount, compatibleCandidateCount)
-            } else {
-                diagnostics.event("INFO", "USB_DUPLICATE_CANDIDATE_IGNORED", candidate.summary())
-                publishCurrentCandidateReady(physicalDeviceCount, compatibleCandidateCount)
+                    !automatic &&
+                    failedAdbStableKey == candidate.stableKey &&
+                    observedDevice != null -> {
+                    diagnostics.event("INFO", "ADB_MANUAL_RETRY", candidate.summary())
+                    startAdbTransport(candidate, observedDevice, physicalDeviceCount, compatibleCandidateCount)
+                }
+
+                candidate.mode == Mode.FASTBOOT &&
+                    !automatic &&
+                    failedFastbootStableKey == candidate.stableKey &&
+                    observedDevice != null -> {
+                    diagnostics.event("INFO", "FASTBOOT_MANUAL_RETRY", candidate.summary())
+                    startFastbootTransport(candidate, observedDevice, physicalDeviceCount, compatibleCandidateCount)
+                }
+
+                else -> {
+                    diagnostics.event("INFO", "USB_DUPLICATE_CANDIDATE_IGNORED", candidate.summary())
+                    publishCurrentCandidateReady(physicalDeviceCount, compatibleCandidateCount)
+                }
             }
             return
         }
 
         stopAdbTransport("candidate_changed")
+        stopFastbootTransport("candidate_changed")
         currentCandidate = candidate
         failedAdbStableKey = null
+        failedFastbootStableKey = null
         val capturedAt = System.currentTimeMillis()
         val sessionId = "$capturedAt-${sessionSequence.incrementAndGet()}"
         val snapshot = UsbSessionSnapshot.capture(
@@ -625,7 +647,7 @@ class UsbSessionCoordinator(context: Context) {
         diagnostics.event(
             "INFO",
             "USB_CANDIDATE_READY",
-            "sessionId=$sessionId ${candidate.summary()} transport=${if (candidate.mode == Mode.ADB) "adb-pending" else "not-opened"}",
+            "sessionId=$sessionId ${candidate.summary()} transport=${when (candidate.mode) { Mode.ADB -> "adb-pending"; Mode.FASTBOOT -> "fastboot-readonly-pending" }}",
         )
         observationStore.publish(
             UsbSessionObservation(
@@ -636,13 +658,25 @@ class UsbSessionCoordinator(context: Context) {
             ),
         )
 
-        if (candidate.mode == Mode.ADB) {
-            if (observedDevice == null) {
-                failedAdbStableKey = candidate.stableKey
-                publishAdbTransport(AdbTransportObservation.Status.ERROR)
-                diagnostics.event("ERROR", "ADB_CONNECT_DEVICE_MISSING", candidate.summary())
-            } else {
-                startAdbTransport(candidate, observedDevice, physicalDeviceCount, compatibleCandidateCount)
+        when (candidate.mode) {
+            Mode.ADB -> {
+                if (observedDevice == null) {
+                    failedAdbStableKey = candidate.stableKey
+                    publishAdbTransport(AdbTransportObservation.Status.ERROR)
+                    diagnostics.event("ERROR", "ADB_CONNECT_DEVICE_MISSING", candidate.summary())
+                } else {
+                    startAdbTransport(candidate, observedDevice, physicalDeviceCount, compatibleCandidateCount)
+                }
+            }
+
+            Mode.FASTBOOT -> {
+                if (observedDevice == null) {
+                    failedFastbootStableKey = candidate.stableKey
+                    publishFastbootTransport(FastbootTransportObservation.Status.ERROR)
+                    diagnostics.event("ERROR", "FASTBOOT_CONNECT_DEVICE_MISSING", candidate.summary())
+                } else {
+                    startFastbootTransport(candidate, observedDevice, physicalDeviceCount, compatibleCandidateCount)
+                }
             }
         }
     }
@@ -815,6 +849,127 @@ class UsbSessionCoordinator(context: Context) {
         )
     }
 
+    private fun startFastbootTransport(
+        candidate: Candidate,
+        device: UsbDevice,
+        physicalDeviceCount: Int,
+        compatibleCandidateCount: Int,
+    ) {
+        val generation = fastbootTransportGeneration.incrementAndGet()
+        val previous = synchronized(fastbootTransportLock) {
+            activeFastbootTransport.also { activeFastbootTransport = null }
+        }
+        previous?.close()
+        failedFastbootStableKey = null
+        observationStore.publish(
+            UsbSessionObservation(
+                status = UsbSessionObservation.Status.CANDIDATE_READY,
+                physicalDeviceCount = physicalDeviceCount,
+                compatibleCandidateCount = compatibleCandidateCount,
+                candidate = candidate.toUsbCandidateSummary(),
+                fastbootTransport = FastbootTransportObservation(FastbootTransportObservation.Status.CONNECTING),
+            ),
+        )
+        diagnostics.event("INFO", "FASTBOOT_CONNECT_STARTED", "generation=$generation ${candidate.summary()}")
+
+        fastbootTransportExecutor.execute {
+            if (fastbootTransportGeneration.get() != generation) return@execute
+            val transport = FastbootUsbTransport(
+                usbManager = usbManager,
+                device = device,
+                preferredInterfaceIndex = candidate.interfaceIndex,
+                onEvent = { name, detail -> diagnostics.event("INFO", name, detail) },
+                onTransportFailure = { code, message ->
+                    handler.post {
+                        if (isCurrentFastbootGeneration(generation, candidate.stableKey)) {
+                            failedFastbootStableKey = candidate.stableKey
+                            publishFastbootTransport(FastbootTransportObservation.Status.ERROR)
+                            diagnostics.event(
+                                "ERROR",
+                                "FASTBOOT_TRANSPORT_FAILED",
+                                "generation=$generation code=${code.name} message=${message.take(500)} autoRetry=false",
+                            )
+                        }
+                    }
+                },
+            )
+            val installed = synchronized(fastbootTransportLock) {
+                if (fastbootTransportGeneration.get() == generation) {
+                    activeFastbootTransport = transport
+                    true
+                } else {
+                    false
+                }
+            }
+            if (!installed) {
+                transport.close()
+                return@execute
+            }
+
+            val info = transport.connectAndQualify()
+            handler.post {
+                if (!isCurrentFastbootGeneration(generation, candidate.stableKey)) return@post
+                if (info == null || !transport.isConnected) {
+                    failedFastbootStableKey = candidate.stableKey
+                    publishFastbootTransport(FastbootTransportObservation.Status.ERROR)
+                    diagnostics.event(
+                        "ERROR",
+                        "FASTBOOT_CONNECT_ENDED",
+                        "generation=$generation success=false autoRetry=false",
+                    )
+                } else {
+                    failedFastbootStableKey = null
+                    publishFastbootTransport(
+                        status = FastbootTransportObservation.Status.CONNECTED,
+                        product = info.product,
+                    )
+                    diagnostics.event(
+                        "INFO",
+                        "FASTBOOT_READ_ONLY_PROBE_RESULT",
+                        "generation=$generation success=true command=getvar:product " +
+                            "product=${info.product ?: "unreported"} finalType=${info.qualifierFinalType}",
+                    )
+                    diagnostics.event(
+                        "INFO",
+                        "FASTBOOT_CONNECT_ENDED",
+                        "generation=$generation success=true product=${info.product ?: "unreported"}",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun stopFastbootTransport(reason: String) {
+        fastbootTransportGeneration.incrementAndGet()
+        failedFastbootStableKey = null
+        val transport = synchronized(fastbootTransportLock) {
+            activeFastbootTransport.also { activeFastbootTransport = null }
+        }
+        if (transport != null) {
+            diagnostics.event("INFO", "FASTBOOT_TRANSPORT_STOP", "reason=$reason")
+            transport.close()
+        }
+    }
+
+    private fun isCurrentFastbootGeneration(generation: Long, stableKey: String): Boolean =
+        started &&
+            fastbootTransportGeneration.get() == generation &&
+            currentCandidate?.stableKey == stableKey
+
+    private fun publishFastbootTransport(
+        status: FastbootTransportObservation.Status,
+        product: String? = null,
+    ) {
+        val candidate = currentCandidate ?: return
+        observationStore.publish(
+            observationStore.current().copy(
+                status = UsbSessionObservation.Status.CANDIDATE_READY,
+                candidate = candidate.toUsbCandidateSummary(),
+                fastbootTransport = FastbootTransportObservation(status, product),
+            ),
+        )
+    }
+
     private fun AdbUsbTransport.PeerMode.toObservedPeerMode(): AdbObservedPeerMode = when (this) {
         AdbUsbTransport.PeerMode.DEVICE -> AdbObservedPeerMode.DEVICE
         AdbUsbTransport.PeerMode.RECOVERY -> AdbObservedPeerMode.RECOVERY
@@ -844,6 +999,7 @@ class UsbSessionCoordinator(context: Context) {
         if (!decision.disconnectCurrent) return
 
         stopAdbTransport("device_detached")
+        stopFastbootTransport("device_detached")
         currentCandidate = null
         observationStore.publish(
             UsbSessionObservation(
@@ -1077,6 +1233,8 @@ class UsbSessionCoordinator(context: Context) {
                 candidate = candidate.toUsbCandidateSummary(),
                 adbTransport = observationStore.current().adbTransport.takeIf { candidate.mode == Mode.ADB }
                     ?: AdbTransportObservation(),
+                fastbootTransport = observationStore.current().fastbootTransport.takeIf { candidate.mode == Mode.FASTBOOT }
+                    ?: FastbootTransportObservation(),
             ),
         )
     }

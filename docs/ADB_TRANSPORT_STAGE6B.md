@@ -157,15 +157,84 @@ Legacy framing preserved by the A2 stream state machine:
 - the fixed probe is attempted only for peers classified as `DEVICE` or `RECOVERY`;
   `SIDELOAD` and unknown peers are not given a shell probe.
 
-Hardware status for Stage 6B2 before a post-CI device run:
+### Stage 6B2 CI evidence
 
-**NOT YET VERIFIED**.
+Implementation commit:
+
+`f31a2362384d61ce60268fa6058cdbe94fe2d3e9`
+
+Reviewed CI reports archive:
+
+`NekoFlash-f31a2362384d61ce60268fa6058cdbe94fe2d3e9-reports.zip`
+
+SHA-256:
+
+`3be0fe3a91d653b68e630bb83d140c10a36462ad0d8b93e5fc851731ddb70dc2`
+
+Reviewed result:
+
+- 130 unit tests;
+- failures/errors/skipped: `0/0/0`;
+- `AdbReadOnlyStreamSessionTest`: 6/6 PASS;
+- lint: `0 errors / 4 known baseline warnings`;
+- `testDebugUnitTest`, `lintDebug`, and `assembleDebug`: PASS.
+
+### Stage 6B2 hardware evidence
+
+Primary cumulative diagnostics archive:
+
+`NekoFlash-A2-diagnostics-20260821-212541Z.zip`
+
+SHA-256:
+
+`be13d4ff50668ce15618bc587950ff177eebc710256e6e55381bbfb44bb809a8`
+
+First successful-probe diagnostics archive:
+
+`NekoFlash-A2-diagnostics-20260821-212454Z.zip`
+
+SHA-256:
+
+`f7728965d33768bb14e0e5f939abc4d981a87d13416a68ce13984ae8d64de581`
+
+Successful connected-state screenshot:
+
+`7299.png`
+
+SHA-256:
+
+`f0005dd54217b5664aec43d58278bc8a5ac9b3815cc1193f720ed80364844a26`
+
+Observed fixed-probe sequence on the POCO X3 Pro patient:
+
+`ADB_READ_ONLY_PROBE_STARTED -> ADB_STREAM_OPEN_SENT -> ADB_STREAM_OPENED ->
+ADB_STREAM_DATA -> ADB_READ_ONLY_PROBE_SUCCESS -> ADB_READ_ONLY_PROBE_RESULT`
+
+The returned value was exactly:
+
+`vayu`
+
+The cumulative archive contains two successful physical ADB generations. The first
+completed public-key authorization and the second reused the saved signature. Both
+executed the fixed read-only stream probe successfully. The intervening physical detach
+stopped and closed the transport, and a later manual Refresh while the second transport
+was healthy produced `USB_DUPLICATE_CANDIDATE_IGNORED` without duplicating the
+transport or probe.
+
+Stage 6B2 is therefore **CI-VERIFIED / HARDWARE-VERIFIED** for the fixed
+`shell:getprop ro.product.device` service only.
+
+It still does not prove arbitrary ADB shell/services, recovery ADB, Fastboot, mutation,
+or destructive operations.
 
 ## 6. Ordering after Stage 6B2
 
-Do not move to Fastboot or destructive behavior until the fixed read-only ADB stream
-probe is CI-green and hardware-observed.
+The fixed ADB read-only stream probe is now CI-green and hardware-observed. The next
+allowed transport slice is read-only Fastboot peer qualification, beginning with the
+legacy `getvar:product` handshake probe. Generic shell/service expansion is not required
+before that Fastboot bring-up.
 
-After that, any expansion from the fixed probe into broader shell/service support must
+Any later expansion from the fixed ADB probe into broader shell/service support must
 continue to be migrated mechanically from the supplied legacy behavior with regression
 coverage for stream IDs, stale close handling, dispatcher ownership, and reconnect.
+Destructive Fastboot behavior remains last.
