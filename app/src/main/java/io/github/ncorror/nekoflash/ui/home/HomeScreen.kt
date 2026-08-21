@@ -24,6 +24,8 @@ import io.github.ncorror.nekoflash.R
 import io.github.ncorror.nekoflash.ui.components.StatusCard
 import io.github.ncorror.nekoflash.ui.components.StatusTone
 import io.github.ncorror.nekoflash.ui.theme.NekoFlashSpacing
+import io.github.ncorror.nekoflash.usb.session.AdbObservedPeerMode
+import io.github.ncorror.nekoflash.usb.session.AdbTransportObservation
 import io.github.ncorror.nekoflash.usb.session.UsbCandidateSummary
 import io.github.ncorror.nekoflash.usb.session.UsbManualScanPrompt
 import io.github.ncorror.nekoflash.usb.session.UsbObservedMode
@@ -63,6 +65,15 @@ fun HomeScreen(
             label = stringResource(R.string.status_usb),
             value = observation.status.localizedLabel(),
             tone = if (observation.status == UsbSessionObservation.Status.CANDIDATE_READY) {
+                StatusTone.Positive
+            } else {
+                StatusTone.Neutral
+            },
+        ),
+        HomeStatusItem(
+            label = stringResource(R.string.status_adb),
+            value = observation.adbTransport.localizedLabel(),
+            tone = if (observation.adbTransport.status == AdbTransportObservation.Status.CONNECTED) {
                 StatusTone.Positive
             } else {
                 StatusTone.Neutral
@@ -250,3 +261,23 @@ private fun UsbSessionObservation.Status.localizedLabel(): String = stringResour
         UsbSessionObservation.Status.CANDIDATE_READY -> R.string.usb_status_detected
     },
 )
+
+@Composable
+private fun AdbTransportObservation.localizedLabel(): String = when (status) {
+    AdbTransportObservation.Status.INACTIVE -> stringResource(R.string.adb_status_inactive)
+    AdbTransportObservation.Status.CONNECTING -> stringResource(R.string.adb_status_connecting)
+    AdbTransportObservation.Status.AUTHORIZING -> stringResource(R.string.adb_status_authorizing)
+    AdbTransportObservation.Status.ERROR -> stringResource(R.string.adb_status_error)
+    AdbTransportObservation.Status.CONNECTED -> stringResource(
+        R.string.adb_status_connected,
+        peerMode.localizedLabel(),
+    )
+}
+
+@Composable
+private fun AdbObservedPeerMode?.localizedLabel(): String = when (this) {
+    AdbObservedPeerMode.DEVICE -> stringResource(R.string.adb_peer_device)
+    AdbObservedPeerMode.RECOVERY -> stringResource(R.string.adb_peer_recovery)
+    AdbObservedPeerMode.SIDELOAD -> stringResource(R.string.adb_peer_sideload)
+    AdbObservedPeerMode.UNKNOWN, null -> stringResource(R.string.adb_peer_unknown)
+}

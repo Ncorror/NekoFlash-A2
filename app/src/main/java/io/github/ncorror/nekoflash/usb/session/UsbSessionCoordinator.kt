@@ -11,6 +11,7 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import io.github.ncorror.nekoflash.adb.transport.AdbUsbTransport
 import io.github.ncorror.nekoflash.usb.android.AndroidUsbDescriptorMapper
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbDiagnosticStore
 import io.github.ncorror.nekoflash.usb.diagnostics.UsbDiagnosticsZipExporter
@@ -21,14 +22,14 @@ import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector.Mode
 import io.github.ncorror.nekoflash.usb.model.UsbDeviceDescriptor
 import java.io.OutputStream
 import java.util.UUID
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Application-scoped owner of Android USB discovery, permission and re-enumeration.
  *
- * Transport opening/claiming is intentionally not added in this stage. A permitted
- * candidate is captured as diagnostic evidence and becomes the current descriptor
- * generation until a real ADB/Fastboot transport is integrated.
+ * Stage 6B opens ADB only after descriptor selection and Android permission. Fastboot
+ * transport remains intentionally unopened. ADB retries are manual-only after failure.
  */
 class UsbSessionCoordinator(context: Context) {
     private val appContext = context.applicationContext
@@ -41,6 +42,11 @@ class UsbSessionCoordinator(context: Context) {
     )
     private val permissionTimeouts = mutableMapOf<Int, Runnable>()
     private val sessionSequence = AtomicLong(0L)
+    private val adbTransportGeneration = AtomicLong(0L)
+    private val adbTransportExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "NekoFlash-ADB-Connect").apply { isDaemon = true }
+    }
+    private val adbTransportLock = Any()
 
     private var started = false
     private var activePermissionCallback: UsbPermissionCallbackIdentity.Callback? = null
@@ -52,6 +58,8 @@ class UsbSessionCoordinator(context: Context) {
     private var modeSwitchWatch: UsbSessionLifecyclePolicy.ModeSwitchWatch? = null
     private val observationStore = UsbSessionObservationStore()
     private var pendingManualConfirmation: PendingManualConfirmation? = null
+    @Volatile private var activeAdbTransport: AdbUsbTransport? = null
+    private var failedAdbStableKey: String? = null
 
     private val startupRunnable = Runnable { runStartupScan() }
     private val modeSwitchRunnable = Runnable { runModeSwitchTick() }
@@ -109,10 +117,7 @@ class UsbSessionCoordinator(context: Context) {
         }
     }
 
-    /**
-     * Ends the current authorized USB automation lease. No transport exists yet,
-     * so descriptor/session state can be discarded instead of surviving a UI exit.
-     */
+    /** Ends the current authorized USB automation lease and its owned ADB transport. */
     fun stop() {
         if (!started) return
         started = false
@@ -121,6 +126,7 @@ class UsbSessionCoordinator(context: Context) {
         permissionTimeouts.values.forEach(handler::removeCallbacks)
         permissionTimeouts.clear()
         permissionRegistry = UsbPermissionPolicy.Registry()
+        stopAdbTransport("coordinator_stop")
         currentCandidate = null
         pendingManualConfirmation = null
         observationStore.publish(UsbSessionObservation())
@@ -477,6 +483,8 @@ class UsbSessionCoordinator(context: Context) {
         when (val action = begin.action) {
             is UsbPermissionPolicy.Action.Connect -> acceptPermittedCandidate(
                 candidate = action.candidate,
+                automatic = action.automatic,
+                observedDevice = device,
                 physicalDeviceCount = physicalDeviceCount,
                 compatibleCandidateCount = compatibleCandidateCount,
             )
@@ -529,7 +537,11 @@ class UsbSessionCoordinator(context: Context) {
         when (val action = result.action) {
             is UsbPermissionPolicy.Action.Connect -> {
                 diagnostics.event("INFO", "USB_PERMISSION_GRANTED", action.candidate.summary())
-                acceptPermittedCandidate(action.candidate)
+                acceptPermittedCandidate(
+                    candidate = action.candidate,
+                    automatic = action.automatic,
+                    observedDevice = device,
+                )
             }
             UsbPermissionPolicy.Action.PermissionDenied -> {
                 diagnostics.event("WARN", "USB_PERMISSION_DENIED")
@@ -577,15 +589,30 @@ class UsbSessionCoordinator(context: Context) {
 
     private fun acceptPermittedCandidate(
         candidate: Candidate,
+        automatic: Boolean,
+        observedDevice: UsbDevice?,
         physicalDeviceCount: Int = observationStore.current().physicalDeviceCount,
         compatibleCandidateCount: Int = observationStore.current().compatibleCandidateCount,
     ) {
         if (currentCandidate?.stableKey == candidate.stableKey) {
-            diagnostics.event("INFO", "USB_DUPLICATE_CANDIDATE_IGNORED", candidate.summary())
-            publishCurrentCandidateReady(physicalDeviceCount, compatibleCandidateCount)
+            if (
+                candidate.mode == Mode.ADB &&
+                !automatic &&
+                failedAdbStableKey == candidate.stableKey &&
+                observedDevice != null
+            ) {
+                diagnostics.event("INFO", "ADB_MANUAL_RETRY", candidate.summary())
+                startAdbTransport(candidate, observedDevice, physicalDeviceCount, compatibleCandidateCount)
+            } else {
+                diagnostics.event("INFO", "USB_DUPLICATE_CANDIDATE_IGNORED", candidate.summary())
+                publishCurrentCandidateReady(physicalDeviceCount, compatibleCandidateCount)
+            }
             return
         }
+
+        stopAdbTransport("candidate_changed")
         currentCandidate = candidate
+        failedAdbStableKey = null
         val capturedAt = System.currentTimeMillis()
         val sessionId = "$capturedAt-${sessionSequence.incrementAndGet()}"
         val snapshot = UsbSessionSnapshot.capture(
@@ -598,7 +625,7 @@ class UsbSessionCoordinator(context: Context) {
         diagnostics.event(
             "INFO",
             "USB_CANDIDATE_READY",
-            "sessionId=$sessionId ${candidate.summary()} transport=not-opened",
+            "sessionId=$sessionId ${candidate.summary()} transport=${if (candidate.mode == Mode.ADB) "adb-pending" else "not-opened"}",
         )
         observationStore.publish(
             UsbSessionObservation(
@@ -608,6 +635,146 @@ class UsbSessionCoordinator(context: Context) {
                 candidate = candidate.toUsbCandidateSummary(),
             ),
         )
+
+        if (candidate.mode == Mode.ADB) {
+            if (observedDevice == null) {
+                failedAdbStableKey = candidate.stableKey
+                publishAdbTransport(AdbTransportObservation.Status.ERROR)
+                diagnostics.event("ERROR", "ADB_CONNECT_DEVICE_MISSING", candidate.summary())
+            } else {
+                startAdbTransport(candidate, observedDevice, physicalDeviceCount, compatibleCandidateCount)
+            }
+        }
+    }
+
+    private fun startAdbTransport(
+        candidate: Candidate,
+        device: UsbDevice,
+        physicalDeviceCount: Int,
+        compatibleCandidateCount: Int,
+    ) {
+        val generation = adbTransportGeneration.incrementAndGet()
+        val previous = synchronized(adbTransportLock) {
+            activeAdbTransport.also { activeAdbTransport = null }
+        }
+        previous?.close()
+        failedAdbStableKey = null
+        observationStore.publish(
+            UsbSessionObservation(
+                status = UsbSessionObservation.Status.CANDIDATE_READY,
+                physicalDeviceCount = physicalDeviceCount,
+                compatibleCandidateCount = compatibleCandidateCount,
+                candidate = candidate.toUsbCandidateSummary(),
+                adbTransport = AdbTransportObservation(AdbTransportObservation.Status.CONNECTING),
+            ),
+        )
+        diagnostics.event("INFO", "ADB_CONNECT_STARTED", "generation=$generation ${candidate.summary()}")
+
+        adbTransportExecutor.execute {
+            if (adbTransportGeneration.get() != generation) return@execute
+            val transport = AdbUsbTransport(
+                usbManager = usbManager,
+                device = device,
+                keyDirectory = java.io.File(appContext.filesDir, "adbkeys"),
+                preferredInterfaceIndex = candidate.interfaceIndex,
+                onEvent = { name, detail -> diagnostics.event("INFO", name, detail) },
+                onAuthRequired = {
+                    handler.post {
+                        if (isCurrentAdbGeneration(generation, candidate.stableKey)) {
+                            publishAdbTransport(AdbTransportObservation.Status.AUTHORIZING)
+                        }
+                    }
+                },
+                onTransportFailure = { code, message ->
+                    handler.post {
+                        if (isCurrentAdbGeneration(generation, candidate.stableKey)) {
+                            failedAdbStableKey = candidate.stableKey
+                            publishAdbTransport(AdbTransportObservation.Status.ERROR)
+                            diagnostics.event(
+                                "ERROR",
+                                "ADB_TRANSPORT_FAILED",
+                                "generation=$generation code=${code.name} message=${message.take(500)} autoRetry=false",
+                            )
+                        }
+                    }
+                },
+            )
+            val installed = synchronized(adbTransportLock) {
+                if (adbTransportGeneration.get() == generation) {
+                    activeAdbTransport = transport
+                    true
+                } else {
+                    false
+                }
+            }
+            if (!installed) {
+                transport.close()
+                return@execute
+            }
+
+            val info = transport.connect()
+            handler.post {
+                if (!isCurrentAdbGeneration(generation, candidate.stableKey)) return@post
+                if (info == null || !transport.isConnected) {
+                    failedAdbStableKey = candidate.stableKey
+                    publishAdbTransport(AdbTransportObservation.Status.ERROR)
+                    diagnostics.event(
+                        "ERROR",
+                        "ADB_CONNECT_ENDED",
+                        "generation=$generation success=false autoRetry=false",
+                    )
+                } else {
+                    failedAdbStableKey = null
+                    publishAdbTransport(
+                        status = AdbTransportObservation.Status.CONNECTED,
+                        peerMode = info.peerMode.toObservedPeerMode(),
+                    )
+                    diagnostics.event(
+                        "INFO",
+                        "ADB_CONNECT_ENDED",
+                        "generation=$generation success=true peerMode=${info.peerMode.name}",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun stopAdbTransport(reason: String) {
+        adbTransportGeneration.incrementAndGet()
+        failedAdbStableKey = null
+        val transport = synchronized(adbTransportLock) {
+            activeAdbTransport.also { activeAdbTransport = null }
+        }
+        if (transport != null) {
+            diagnostics.event("INFO", "ADB_TRANSPORT_STOP", "reason=$reason")
+            transport.close()
+        }
+    }
+
+    private fun isCurrentAdbGeneration(generation: Long, stableKey: String): Boolean =
+        started &&
+            adbTransportGeneration.get() == generation &&
+            currentCandidate?.stableKey == stableKey
+
+    private fun publishAdbTransport(
+        status: AdbTransportObservation.Status,
+        peerMode: AdbObservedPeerMode? = null,
+    ) {
+        val candidate = currentCandidate ?: return
+        observationStore.publish(
+            observationStore.current().copy(
+                status = UsbSessionObservation.Status.CANDIDATE_READY,
+                candidate = candidate.toUsbCandidateSummary(),
+                adbTransport = AdbTransportObservation(status, peerMode),
+            ),
+        )
+    }
+
+    private fun AdbUsbTransport.PeerMode.toObservedPeerMode(): AdbObservedPeerMode = when (this) {
+        AdbUsbTransport.PeerMode.DEVICE -> AdbObservedPeerMode.DEVICE
+        AdbUsbTransport.PeerMode.RECOVERY -> AdbObservedPeerMode.RECOVERY
+        AdbUsbTransport.PeerMode.SIDELOAD -> AdbObservedPeerMode.SIDELOAD
+        AdbUsbTransport.PeerMode.UNKNOWN -> AdbObservedPeerMode.UNKNOWN
     }
 
     private fun handleDetached(device: UsbDevice) {
@@ -631,6 +798,7 @@ class UsbSessionCoordinator(context: Context) {
         }
         if (!decision.disconnectCurrent) return
 
+        stopAdbTransport("device_detached")
         currentCandidate = null
         observationStore.publish(
             UsbSessionObservation(
@@ -862,6 +1030,8 @@ class UsbSessionCoordinator(context: Context) {
                 physicalDeviceCount = physicalDeviceCount,
                 compatibleCandidateCount = compatibleCandidateCount,
                 candidate = candidate.toUsbCandidateSummary(),
+                adbTransport = observationStore.current().adbTransport.takeIf { candidate.mode == Mode.ADB }
+                    ?: AdbTransportObservation(),
             ),
         )
     }

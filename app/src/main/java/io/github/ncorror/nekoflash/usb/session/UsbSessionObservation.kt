@@ -4,17 +4,17 @@ import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector
 import io.github.ncorror.nekoflash.usb.discovery.UsbInterfaceSelector.Candidate
 
 /**
- * UI-safe snapshot of coordinator-owned USB discovery state.
+ * UI-safe snapshot of coordinator-owned USB discovery and transport state.
  *
- * CANDIDATE_READY means descriptor + Android permission are ready for the next
- * transport stage. It intentionally does not mean that UsbDeviceConnection is
- * open or that an ADB/Fastboot handshake has completed.
+ * CANDIDATE_READY still means descriptor + Android permission only. ADB transport state is
+ * reported independently so Stage 6A semantics cannot be mistaken for a completed handshake.
  */
 data class UsbSessionObservation(
     val status: Status = Status.INACTIVE,
     val physicalDeviceCount: Int = 0,
     val compatibleCandidateCount: Int = 0,
     val candidate: UsbCandidateSummary? = null,
+    val adbTransport: AdbTransportObservation = AdbTransportObservation(),
 ) {
     enum class Status {
         INACTIVE,
@@ -27,6 +27,26 @@ data class UsbSessionObservation(
         PERMISSION_ERROR,
         CANDIDATE_READY,
     }
+}
+
+data class AdbTransportObservation(
+    val status: Status = Status.INACTIVE,
+    val peerMode: AdbObservedPeerMode? = null,
+) {
+    enum class Status {
+        INACTIVE,
+        CONNECTING,
+        AUTHORIZING,
+        CONNECTED,
+        ERROR,
+    }
+}
+
+enum class AdbObservedPeerMode {
+    DEVICE,
+    RECOVERY,
+    SIDELOAD,
+    UNKNOWN,
 }
 
 enum class UsbObservedMode {
