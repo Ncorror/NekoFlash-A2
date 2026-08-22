@@ -77,7 +77,7 @@ internal class FastbootReadOnlySession(
             variants.forEach { variant ->
                 val prefix = "$variant:"
                 if (cleaned.startsWith(prefix, ignoreCase = true)) {
-                    return cleaned.substringAfter(':').trim().ifBlank { null }
+                    return cleaned.substring(prefix.length).trim().ifBlank { null }
                 }
             }
             return cleaned.substringAfter(':', cleaned).trim().ifBlank { null }

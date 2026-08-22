@@ -4,12 +4,11 @@ import java.util.Locale
 
 /**
  * Privacy-safe read-only partition/topology model derived from an explicit manual
- * `getvar:all` snapshot.
+ * `getvar:all` snapshot plus bounded legacy metadata backfill point queries.
  *
- * Stage 6C5 intentionally adds no new Fastboot wire command. It only turns already
- * collected metadata into a bounded in-memory inventory using the supplied legacy
- * rules. `has-slot:<base>` alone never invents a concrete partition, and vayu stays
- * legacy A-only even when a bootloader exposes noisy slot metadata.
+ * `has-slot:<base>` alone never invents a concrete partition, point queries may only
+ * fill metadata for planner-selected names, and vayu stays legacy A-only even when a
+ * bootloader exposes noisy slot metadata. No result from this model authorizes a write.
  */
 internal object FastbootPartitionInventory {
     enum class SlotTopology {
@@ -50,6 +49,23 @@ internal object FastbootPartitionInventory {
         val partitionName: String? = null,
     )
 
+    data class PointProbe(
+        val name: String,
+        val sizeBytes: Long? = null,
+        val type: String? = null,
+        val logical: Boolean? = null,
+        val hasSlot: Boolean? = null,
+        val attemptedFields: Set<FastbootGetVarAllPlan.MetadataField> = emptySet(),
+        val resolvedFields: Set<FastbootGetVarAllPlan.MetadataField> = emptySet(),
+    ) {
+        val hasConcreteEvidence: Boolean
+            get() = resolvedFields.any {
+                it == FastbootGetVarAllPlan.MetadataField.SIZE ||
+                    it == FastbootGetVarAllPlan.MetadataField.TYPE ||
+                    it == FastbootGetVarAllPlan.MetadataField.LOGICAL
+            }
+    }
+
     data class Entry(
         val name: String,
         val baseName: String,
@@ -73,7 +89,12 @@ internal object FastbootPartitionInventory {
         val finalStatus: String,
         val warnings: List<Warning>,
         val duplicateMetadataCount: Int,
+        val pointQueryCount: Int,
+        val unresolvedPointQueryCount: Int,
     ) {
+        fun partition(name: String): Entry? =
+            entries.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
+
         fun summary(): Summary = Summary(
             productReported = productReported,
             topology = topology,
@@ -89,6 +110,8 @@ internal object FastbootPartitionInventory {
             incompleteEntryCount = entries.count { it.missingFields.isNotEmpty() },
             warningCount = warnings.size,
             duplicateMetadataCount = duplicateMetadataCount,
+            pointQueryCount = pointQueryCount,
+            unresolvedPointQueryCount = unresolvedPointQueryCount,
             complete = complete,
         )
     }
@@ -109,6 +132,8 @@ internal object FastbootPartitionInventory {
         val incompleteEntryCount: Int,
         val warningCount: Int,
         val duplicateMetadataCount: Int,
+        val pointQueryCount: Int,
+        val unresolvedPointQueryCount: Int,
         val complete: Boolean,
     )
 
@@ -152,8 +177,10 @@ internal object FastbootPartitionInventory {
         source: FastbootGetVarAllPlan.Snapshot,
         fallbackProduct: String? = null,
         supplementalVariables: Map<String, String> = emptyMap(),
+        pointProbes: List<PointProbe> = emptyList(),
+        collectionWarnings: List<Warning> = emptyList(),
     ): Snapshot {
-        val warnings = mutableListOf<Warning>()
+        val warnings = collectionWarnings.toMutableList()
 
         fun sourceValue(name: String): String? = source.variables[name]
             ?.trim()
@@ -204,6 +231,47 @@ internal object FastbootPartitionInventory {
                 logical = partition.logical,
                 hasSlot = partition.hasSlot,
             )
+        }
+
+        fun mergeField(
+            entry: MutableEntry,
+            existing: Any?,
+            incoming: Any?,
+            applyIncoming: () -> Unit,
+        ) {
+            if (incoming == null) return
+            if (existing != null && existing != incoming) {
+                warnings += Warning(
+                    code = "PARTITION_METADATA_CONFLICT",
+                    severity = WarningSeverity.WARNING,
+                    partitionName = entry.name,
+                )
+            }
+            applyIncoming()
+        }
+
+        pointProbes.forEach { probe ->
+            val name = probe.name.trim().lowercase(Locale.US)
+            if (name.isBlank()) return@forEach
+            if (FastbootGetVarAllPlan.MetadataField.HAS_SLOT in probe.resolvedFields) {
+                slotFamilies[name] = probe.hasSlot
+            }
+            if (!probe.hasConcreteEvidence) return@forEach
+
+            val entry = mutableEntries.getOrPut(name) { MutableEntry(name) }
+            mergeField(entry, entry.sizeBytes, probe.sizeBytes) {
+                entry.sizeBytes = probe.sizeBytes
+            }
+            val normalizedType = probe.type?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() }
+            mergeField(entry, entry.type, normalizedType) {
+                entry.type = normalizedType
+            }
+            mergeField(entry, entry.logical, probe.logical) {
+                entry.logical = probe.logical
+            }
+            mergeField(entry, entry.hasSlot, probe.hasSlot) {
+                entry.hasSlot = probe.hasSlot
+            }
         }
 
         // `has-slot:<base>` is family metadata. It may annotate an already concrete
@@ -284,6 +352,11 @@ internal object FastbootPartitionInventory {
                 )
             }
 
+        val pointQueryCount = pointProbes.sumOf { it.attemptedFields.size }
+        val unresolvedPointQueryCount = pointProbes.sumOf {
+            (it.attemptedFields - it.resolvedFields).size
+        }
+
         return Snapshot(
             productReported = product != null,
             topology = topology,
@@ -294,6 +367,8 @@ internal object FastbootPartitionInventory {
             finalStatus = source.finalStatus,
             warnings = (warnings + entryWarnings).distinctBy { listOf(it.code, it.partitionName, it.severity.name) },
             duplicateMetadataCount = source.duplicateVariables.size,
+            pointQueryCount = pointQueryCount,
+            unresolvedPointQueryCount = unresolvedPointQueryCount,
         )
     }
 

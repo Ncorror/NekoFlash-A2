@@ -241,7 +241,9 @@ class UsbSessionCoordinator(context: Context) {
                             "inventoryEntries=${summary.inventory?.entryCount ?: 0} " +
                             "inventoryWarnings=${summary.inventory?.warningCount ?: 0} " +
                             "inventoryComplete=${summary.inventory?.complete ?: false} " +
-                            "pointQueries=0 payloadsRedacted=true",
+                            "pointQueries=${summary.inventory?.pointQueryCount ?: 0} " +
+                            "unresolvedPointQueries=${summary.inventory?.unresolvedPointQueryCount ?: 0} " +
+                            "payloadsRedacted=true",
                     )
                 } else {
                     diagnostics.event(

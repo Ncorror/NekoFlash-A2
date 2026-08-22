@@ -379,3 +379,97 @@ Stage 6C5 deliberately does not run the legacy `FastbootPartitionProbePlanner` y
 There are no `partition-size:*`, `partition-type:*`, `is-logical:*`, or `has-slot:*`
 backfill point queries in this slice. DATA/download, flash/erase/set_active/reboot,
 OEM/unlock, and generic Fastboot command entry remain closed.
+
+
+## 13. Stage 6C5 exact-head verification record
+
+The privacy-safe local partition/topology derivation is complete for its defined
+read-only scope at exact commit:
+
+`992049440e7f7043ffbe6a66804d1b5e6bfbf843`
+
+Reviewed exact-head CI evidence:
+
+- reports ZIP SHA-256:
+  `314a78ad00db829fdb2e3890d03a15e5ecd7f3a36b3370c99b04e42bbbf35d7f`;
+- 173/173 unit tests passed;
+- lint passed with 0 errors / 4 known non-blocking warnings;
+- `assembleDebug` passed.
+
+Reviewed hardware evidence on the POCO X3 Pro Fastboot peer:
+
+- first diagnostics ZIP SHA-256:
+  `afd4c75536bbd95020acb9257fe699f870b952885a831dadb6d252384fdb3e25`;
+- cumulative detach/reconnect diagnostics ZIP SHA-256:
+  `7ddef6f5b75ba9d464f0bc1f0ee5ff70ff7cadcc7321525f1bbd0352b6a9f637`;
+- connected-state screenshot SHA-256:
+  `5bda6a0300df0e338a34972f8af439271ac8d63fe3f4f244f024a53ffe4d12a1`.
+
+Every completed inventory in the hardware campaign reported:
+
+`source=getvar_all topology=LEGACY_A_ONLY currentSlot=unreported entries=100
+slotFamilies=0 physical=0 logical=0 unknownStorage=100 normal=3 advanced=6
+critical=91 incomplete=100 warnings=101 duplicates=2 complete=true pointQueries=0
+privacySafe=true`
+
+The cumulative campaign repeated the same result four times across two transport
+generations. Stage 6C5 sent no partition metadata point-query command; the only broad
+wire action remained the explicit manual Stage 6C4 `getvar:all`. Physical detach closed
+the active generation, reconnect opened a fresh one, and manual USB Refresh on the
+healthy candidate remained deduplicated.
+
+Therefore Stage 6C5 is **CI-verified and hardware-verified only for privacy-safe local
+partition/topology derivation from an explicit manual broad snapshot**. It does not
+authorize partition metadata backfill, DATA transfer, or any mutation command.
+
+## 14. Stage 6C6 bounded legacy partition metadata backfill
+
+Stage 6C6 ports the supplied legacy `FastbootPartitionProbePlanner` without widening
+the operation surface beyond read-only metadata. Backfill runs only as part of the
+explicit manual Fastboot-data refresh chain:
+
+`manual getvar:all -> initial local inventory -> bounded planner -> fixed metadata
+getvars -> final local inventory`
+
+There is no backfill during initial/automatic Fastboot connection.
+
+The planner may generate only these exact variable families:
+
+- `partition-size:<name>`;
+- `partition-type:<name>`;
+- `is-logical:<name>`;
+- `has-slot:<name>`.
+
+The wire command remains the existing Fastboot `getvar:` prefix applied to one of those
+planner-generated variables. Arbitrary getvar input is not exposed to UI or callers.
+
+The supplied legacy limit of **24 point queries per manual snapshot** is retained. The
+planner prioritizes discovery rank, then risk class (`NORMAL`, `ADVANCED`, `CRITICAL`),
+then missing field (`SIZE`, `TYPE`, `LOGICAL`, `HAS_SLOT`), then partition name. If no
+concrete partition was discovered, the same tiny legacy fallback bases may be used; the
+backfill must not expand into an unbounded partition scan.
+
+Response semantics remain fail closed:
+
+- `OKAY`/value resolves that one requested metadata field;
+- protocol-level `FAIL` leaves that field unresolved while preserving the healthy
+  session;
+- timeout, short write, lost interface, or other transport ambiguity aborts the
+  remaining backfill, closes/fails the generation through the existing transport path,
+  and requires explicit manual USB Refresh before retry.
+
+Colon-scoped variables are normalized by removing the exact requested variable prefix
+from INFO/TEXT values before parsing. This is required for responses such as
+`partition-size:boot: 0x...`; using a generic first-colon split would incorrectly leave
+`boot: 0x...` as the value.
+
+Inventory merge remains conservative and privacy-safe:
+
+- `has-slot` alone never creates a concrete partition;
+- `vayu` remains `LEGACY_A_ONLY`;
+- point-probe conflicts produce warning codes/counts, not raw values;
+- summary exposes aggregate point-query counts only;
+- raw `getvar:all` values and serial are never exported by the inventory layer.
+
+Stage 6C6 still adds no `DATA`, `download:`, `flash:`, `erase:`, `set_active:`, reboot,
+OEM/unlock command, generic Fastboot terminal, or generic ADB shell.

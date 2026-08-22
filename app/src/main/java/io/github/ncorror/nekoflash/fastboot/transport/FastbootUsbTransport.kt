@@ -38,6 +38,8 @@ class FastbootUsbTransport(
         val incompleteEntryCount: Int,
         val warningCount: Int,
         val duplicateMetadataCount: Int,
+        val pointQueryCount: Int,
+        val unresolvedPointQueryCount: Int,
         val complete: Boolean,
     )
 
@@ -87,6 +89,26 @@ class FastbootUsbTransport(
         INTERRUPTED,
         CLOSED,
         UNKNOWN,
+    }
+
+    private data class MutablePartitionPointProbe(
+        val name: String,
+        var sizeBytes: Long? = null,
+        var type: String? = null,
+        var logical: Boolean? = null,
+        var hasSlot: Boolean? = null,
+        val attemptedFields: MutableSet<FastbootGetVarAllPlan.MetadataField> = linkedSetOf(),
+        val resolvedFields: MutableSet<FastbootGetVarAllPlan.MetadataField> = linkedSetOf(),
+    ) {
+        fun snapshot(): FastbootPartitionInventory.PointProbe = FastbootPartitionInventory.PointProbe(
+            name = name,
+            sizeBytes = sizeBytes,
+            type = type,
+            logical = logical,
+            hasSlot = hasSlot,
+            attemptedFields = attemptedFields.toSet(),
+            resolvedFields = resolvedFields.toSet(),
+        )
     }
 
     private var connection: UsbDeviceConnection? = null
@@ -555,15 +577,109 @@ class FastbootUsbTransport(
         connectionInfo?.currentSlot?.takeIf { it.isNotBlank() }?.let { supplemental["current-slot"] = it }
         connectionInfo?.slotCount?.takeIf { it.isNotBlank() }?.let { supplemental["slot-count"] = it }
 
+        val initialInventory = FastbootPartitionInventory.from(
+            source = snapshot,
+            fallbackProduct = connectionInfo?.product,
+            supplementalVariables = supplemental,
+        )
+        val plan = FastbootPartitionProbePlanner.plan(
+            source = snapshot,
+            inventory = initialInventory,
+            maxQueries = FastbootPartitionProbePlanner.MAX_POINT_QUERIES,
+        )
+        event(
+            "FASTBOOT_PARTITION_BACKFILL_PLAN",
+            "planned=${plan.requests.size} omitted=${plan.omittedRequestCount} " +
+                "budget=${FastbootPartitionProbePlanner.MAX_POINT_QUERIES} " +
+                "discoveryFallback=${plan.discoveryFallbackUsed} manual=true privacySafe=true",
+        )
+
+        val probes = linkedMapOf<String, MutablePartitionPointProbe>()
+        var abortedByBrokenSession = false
+        for (request in plan.requests) {
+            if (closed || !isConnected) {
+                abortedByBrokenSession = true
+                break
+            }
+            val probe = probes.getOrPut(request.partition) {
+                MutablePartitionPointProbe(request.partition)
+            }
+            probe.attemptedFields += request.field
+            val result = queryFixedGetVar(
+                FastbootCoreDiagnosticsPlan.Variable(request.variableName),
+            )
+            if (result == null) {
+                abortedByBrokenSession = true
+                break
+            }
+            val raw = result.value ?: continue
+            when (request.field) {
+                FastbootGetVarAllPlan.MetadataField.SIZE -> {
+                    FastbootGetVarAllPlan.parseSizeValue(raw)?.let {
+                        probe.sizeBytes = it
+                        probe.resolvedFields += request.field
+                    }
+                }
+                FastbootGetVarAllPlan.MetadataField.TYPE -> {
+                    raw.trim().takeIf { it.isNotBlank() }?.let {
+                        probe.type = it
+                        probe.resolvedFields += request.field
+                    }
+                }
+                FastbootGetVarAllPlan.MetadataField.LOGICAL -> {
+                    FastbootGetVarAllPlan.parseBooleanValue(raw)?.let {
+                        probe.logical = it
+                        probe.resolvedFields += request.field
+                    }
+                }
+                FastbootGetVarAllPlan.MetadataField.HAS_SLOT -> {
+                    FastbootGetVarAllPlan.parseBooleanValue(raw)?.let {
+                        probe.hasSlot = it
+                        probe.resolvedFields += request.field
+                    }
+                }
+            }
+        }
+
+        val collectionWarnings = mutableListOf<FastbootPartitionInventory.Warning>()
+        if (plan.discoveryFallbackUsed) {
+            collectionWarnings += FastbootPartitionInventory.Warning(
+                code = "LIMITED_POINT_DISCOVERY",
+                severity = FastbootPartitionInventory.WarningSeverity.WARNING,
+            )
+        }
+        if (plan.omittedRequestCount > 0) {
+            collectionWarnings += FastbootPartitionInventory.Warning(
+                code = "POINT_QUERY_BUDGET_EXHAUSTED",
+                severity = FastbootPartitionInventory.WarningSeverity.INFO,
+            )
+        }
+        if (abortedByBrokenSession) {
+            collectionWarnings += FastbootPartitionInventory.Warning(
+                code = "POINT_QUERY_ABORTED",
+                severity = FastbootPartitionInventory.WarningSeverity.CRITICAL,
+            )
+        }
+
         val inventory = FastbootPartitionInventory.from(
             source = snapshot,
             fallbackProduct = connectionInfo?.product,
             supplementalVariables = supplemental,
+            pointProbes = probes.values.map { it.snapshot() },
+            collectionWarnings = collectionWarnings,
         ).summary()
         val publicInventory = inventory.toPublicSummary()
+        val resolvedPointQueries = inventory.pointQueryCount - inventory.unresolvedPointQueryCount
+        event(
+            "FASTBOOT_PARTITION_BACKFILL_COMPLETE",
+            "planned=${plan.requests.size} attempted=${inventory.pointQueryCount} " +
+                "resolved=$resolvedPointQueries unresolved=${inventory.unresolvedPointQueryCount} " +
+                "omitted=${plan.omittedRequestCount} aborted=$abortedByBrokenSession " +
+                "manual=true privacySafe=true",
+        )
         event(
             "FASTBOOT_PARTITION_INVENTORY_COMPLETE",
-            "source=getvar_all topology=${publicInventory.topology} " +
+            "source=getvar_all_plus_bounded_point_queries topology=${publicInventory.topology} " +
                 "currentSlot=${publicInventory.currentSlot ?: "unreported"} " +
                 "entries=${publicInventory.entryCount} slotFamilies=${publicInventory.slotFamilyCount} " +
                 "physical=${publicInventory.physicalCount} logical=${publicInventory.logicalCount} " +
@@ -571,7 +687,8 @@ class FastbootUsbTransport(
                 "advanced=${publicInventory.advancedCount} critical=${publicInventory.criticalCount} " +
                 "incomplete=${publicInventory.incompleteEntryCount} warnings=${publicInventory.warningCount} " +
                 "duplicates=${publicInventory.duplicateMetadataCount} complete=${publicInventory.complete} " +
-                "pointQueries=0 privacySafe=true",
+                "pointQueries=${publicInventory.pointQueryCount} " +
+                "unresolvedPointQueries=${publicInventory.unresolvedPointQueryCount} privacySafe=true",
         )
         return snapshot.summary().toPublicSummary(publicInventory)
     }
@@ -607,6 +724,8 @@ class FastbootUsbTransport(
             incompleteEntryCount = incompleteEntryCount,
             warningCount = warningCount,
             duplicateMetadataCount = duplicateMetadataCount,
+            pointQueryCount = pointQueryCount,
+            unresolvedPointQueryCount = unresolvedPointQueryCount,
             complete = complete,
         )
 
@@ -620,7 +739,10 @@ class FastbootUsbTransport(
                 "conflictingDuplicates=${summary.conflictingDuplicateCount} " +
                 "serialReported=${summary.serialReported} " +
                 "inventoryTopology=${summary.inventory?.topology ?: "unreported"} " +
-                "inventoryEntries=${summary.inventory?.entryCount ?: 0} payloadsRedacted=true",
+                "inventoryEntries=${summary.inventory?.entryCount ?: 0} " +
+                "pointQueries=${summary.inventory?.pointQueryCount ?: 0} " +
+                "unresolvedPointQueries=${summary.inventory?.unresolvedPointQueryCount ?: 0} " +
+                "payloadsRedacted=true",
         )
     }
 
