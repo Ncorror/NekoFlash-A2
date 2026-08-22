@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
                         diagnosticsExportInProgress = diagnosticsExportInProgress,
                         diagnosticsExportMessage = diagnosticsExportMessage,
                         onRefreshUsb = ::refreshUsb,
+                        onRefreshFastbootDiagnostics = ::refreshFastbootDiagnostics,
                         onManualCandidateChosen = ::chooseManualCandidate,
                         onConfirmGenericFastboot = ::confirmGenericFastboot,
                         onDismissManualPrompt = ::dismissManualUsbPrompt,
@@ -138,6 +139,10 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshUsb() {
         usbManualScanPrompt = usbSessionCoordinator.refreshUsb()
+    }
+
+    private fun refreshFastbootDiagnostics() {
+        usbSessionCoordinator.refreshFastbootReadOnlySnapshot()
     }
 
     private fun chooseManualCandidate(stableKey: String) {

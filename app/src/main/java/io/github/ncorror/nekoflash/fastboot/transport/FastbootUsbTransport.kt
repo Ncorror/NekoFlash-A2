@@ -23,6 +23,18 @@ class FastbootUsbTransport(
     private val onEvent: (String, String) -> Unit,
     private val onTransportFailure: (FailureCode, String) -> Unit,
 ) {
+    data class ManualGetVarAllSummary(
+        val supported: Boolean,
+        val complete: Boolean,
+        val finalStatus: String,
+        val variableCount: Int,
+        val partitionMetadataCount: Int,
+        val ignoredLineCount: Int,
+        val duplicateVariableCount: Int,
+        val conflictingDuplicateCount: Int,
+        val serialReported: Boolean,
+    )
+
     data class ConnectionInfo(
         val product: String?,
         val qualifierFinalType: String,
@@ -144,6 +156,41 @@ class FastbootUsbTransport(
             fail(
                 FailureCode.UNKNOWN,
                 "Fastboot qualification failed: ${error.message ?: error.javaClass.simpleName}",
+            )
+        }
+    }
+
+    /**
+     * Explicit manual-only legacy `getvar:all` snapshot. It is never called during
+     * initial connection. Raw response values are kept in-memory only long enough to
+     * build an aggregate summary; every packet payload is redacted from diagnostics.
+     */
+    fun collectManualGetVarAllSnapshot(): ManualGetVarAllSummary? {
+        if (closed || !isConnected) {
+            event("FASTBOOT_GETVAR_ALL_REJECTED", "reason=not_connected manual=true")
+            return null
+        }
+        event(
+            "FASTBOOT_GETVAR_ALL_STARTED",
+            "manual=true command=${FastbootGetVarAllPlan.COMMAND} " +
+                "commandTimeoutMs=${FastbootGetVarAllPlan.COMMAND_TIMEOUT_MS} " +
+                "responseTimeoutMs=${FastbootGetVarAllPlan.RESPONSE_TIMEOUT_MS}",
+        )
+        return try {
+            if (!writeManualGetVarAllCommand()) {
+                return fail(
+                    FailureCode.COMMAND_SHORT_WRITE,
+                    "Fastboot getvar:all command was not written completely",
+                )
+            }
+            readManualGetVarAllSnapshot()
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            fail(FailureCode.INTERRUPTED, "Fastboot getvar:all interrupted")
+        } catch (error: Exception) {
+            fail(
+                FailureCode.UNKNOWN,
+                "Fastboot getvar:all failed: ${error.message ?: error.javaClass.simpleName}",
             )
         }
     }
@@ -364,6 +411,140 @@ class FastbootUsbTransport(
         }
 
         return fail(FailureCode.CLOSED, "Fastboot transport closed while waiting for ${variable.command}")
+    }
+
+    private fun writeManualGetVarAllCommand(): Boolean {
+        val usbConnection = connection ?: return false
+        val output = endpointOut ?: return false
+        val command = FastbootGetVarAllPlan.COMMAND.toByteArray(Charsets.US_ASCII)
+        val sent = usbConnection.bulkTransfer(
+            output,
+            command,
+            0,
+            command.size,
+            FastbootGetVarAllPlan.COMMAND_TIMEOUT_MS,
+        )
+        event(
+            "FASTBOOT_COMMAND_SENT",
+            "command=${FastbootGetVarAllPlan.COMMAND} sent=$sent expected=${command.size} manual=true",
+        )
+        return sent == command.size
+    }
+
+    private fun readManualGetVarAllSnapshot(): ManualGetVarAllSummary? {
+        val lines = mutableListOf<String>()
+        val startedNs = System.nanoTime()
+        var emptyReads = 0
+
+        while (!closed) {
+            val elapsedMs = ((System.nanoTime() - startedNs).coerceAtLeast(0L) / 1_000_000L)
+            val remainingMs = FastbootGetVarAllPlan.RESPONSE_TIMEOUT_MS.toLong() - elapsedMs
+            if (remainingMs <= 0L) {
+                return fail(
+                    FailureCode.RESPONSE_TIMEOUT,
+                    "getvar:all response timeout after confirmed command send " +
+                        "($emptyReads empty reads, lines=${lines.size})",
+                )
+            }
+
+            // getvar:all can contain unique identifiers. Never export packet payloads.
+            val packet = readPacket(
+                FastbootReadOnlyTiming.nextReadTimeoutMs(remainingMs),
+                redactPayload = true,
+            )
+            if (packet == null) {
+                emptyReads += 1
+                event(
+                    "FASTBOOT_IN_EMPTY",
+                    "command=${FastbootGetVarAllPlan.COMMAND} " +
+                        "failedRead=$emptyReads/${FastbootGetVarAllPlan.MAX_FAILED_READS} " +
+                        "elapsedMs=$elapsedMs remainingMs=$remainingMs manual=true",
+                )
+                if (
+                    emptyReads >= FastbootGetVarAllPlan.MAX_FAILED_READS &&
+                    elapsedMs >= FastbootReadOnlyTiming.MIN_PATIENCE_MS
+                ) {
+                    return fail(
+                        FailureCode.RESPONSE_TIMEOUT,
+                        "Fastboot read failed $emptyReads times for getvar:all after confirmed command send",
+                    )
+                }
+                if (FastbootReadOnlyTiming.READ_RETRY_DELAY_MS > 0L) {
+                    Thread.sleep(FastbootReadOnlyTiming.READ_RETRY_DELAY_MS)
+                }
+                continue
+            }
+
+            emptyReads = 0
+            when (packet.type) {
+                "INFO", "TEXT" -> {
+                    if (packet.payload.isNotBlank()) lines += packet.payload
+                    event(
+                        "FASTBOOT_GETVAR_ALL_PROGRESS",
+                        "type=${packet.type} lines=${lines.size} payloadRedacted=true",
+                    )
+                }
+
+                "OKAY" -> {
+                    if (packet.payload.isNotBlank()) lines += packet.payload
+                    val summary = FastbootGetVarAllPlan.parse(
+                        lines = lines,
+                        complete = true,
+                        finalStatus = "OKAY",
+                    ).summary().toPublicSummary()
+                    eventGetVarAllComplete(summary)
+                    return summary
+                }
+
+                "FAIL" -> {
+                    if (lines.isEmpty()) {
+                        val summary = FastbootGetVarAllPlan.unsupported().toPublicSummary()
+                        eventGetVarAllComplete(summary)
+                        return summary
+                    }
+                    val summary = FastbootGetVarAllPlan.parse(
+                        lines = lines,
+                        complete = false,
+                        finalStatus = "FAIL",
+                        finalMessage = packet.payload,
+                    ).summary().toPublicSummary()
+                    eventGetVarAllComplete(summary)
+                    return summary
+                }
+
+                else -> event(
+                    "FASTBOOT_GETVAR_ALL_UNEXPECTED_RESPONSE",
+                    "type=${packet.type} lines=${lines.size} payloadRedacted=true",
+                )
+            }
+        }
+
+        return fail(FailureCode.CLOSED, "Fastboot transport closed while waiting for getvar:all")
+    }
+
+    private fun FastbootGetVarAllPlan.Summary.toPublicSummary(): ManualGetVarAllSummary =
+        ManualGetVarAllSummary(
+            supported = supported,
+            complete = complete,
+            finalStatus = finalStatus,
+            variableCount = variableCount,
+            partitionMetadataCount = partitionMetadataCount,
+            ignoredLineCount = ignoredLineCount,
+            duplicateVariableCount = duplicateVariableCount,
+            conflictingDuplicateCount = conflictingDuplicateCount,
+            serialReported = serialReported,
+        )
+
+    private fun eventGetVarAllComplete(summary: ManualGetVarAllSummary) {
+        event(
+            "FASTBOOT_GETVAR_ALL_COMPLETE",
+            "manual=true supported=${summary.supported} complete=${summary.complete} " +
+                "finalType=${summary.finalStatus} variables=${summary.variableCount} " +
+                "partitionMetadata=${summary.partitionMetadataCount} ignored=${summary.ignoredLineCount} " +
+                "duplicates=${summary.duplicateVariableCount} " +
+                "conflictingDuplicates=${summary.conflictingDuplicateCount} " +
+                "serialReported=${summary.serialReported} payloadsRedacted=true",
+        )
     }
 
     private fun readProductQualification(): ConnectionInfo? {

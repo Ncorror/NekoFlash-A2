@@ -46,6 +46,7 @@ fun HomeScreen(
     diagnosticsExportInProgress: Boolean,
     diagnosticsExportMessage: String?,
     onRefreshUsb: () -> Unit,
+    onRefreshFastbootDiagnostics: () -> Unit,
     onManualCandidateChosen: (String) -> Unit,
     onConfirmGenericFastboot: (String) -> Unit,
     onDismissManualPrompt: () -> Unit,
@@ -120,6 +121,13 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(text = stringResource(R.string.usb_refresh_button))
+            }
+            OutlinedButton(
+                onClick = onRefreshFastbootDiagnostics,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = observation.fastbootTransport.status == FastbootTransportObservation.Status.CONNECTED,
+            ) {
+                Text(text = stringResource(R.string.fastboot_refresh_diagnostics_button))
             }
             OutlinedButton(
                 onClick = onExportDiagnostics,

@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">NekoFlash</string>
     <string name="home_heading">Device overview</string>
-    <string name="home_description">USB discovery stays separate from transport state. ADB remains limited to the fixed read-only identity probe; Fastboot is limited to fixed read-only product and core diagnostic getvars.</string>
+    <string name="home_description">USB discovery stays separate from transport state. ADB remains limited to the fixed read-only identity probe; Fastboot uses fixed read-only diagnostics automatically and runs the broader getvar:all snapshot only on explicit request.</string>
     <string name="status_device">Device</string>
     <string name="status_mode">Mode</string>
     <string name="status_usb">USB</string>
@@ -20,6 +20,7 @@
     <string name="usb_status_detected">Detected</string>
     <string name="usb_mode_adb">ADB</string>
     <string name="usb_mode_fastboot">Fastboot</string>
+    <string name="fastboot_refresh_diagnostics_button">Refresh Fastboot data</string>
     <string name="usb_refresh_button">Refresh USB</string>
     <string name="adb_status_inactive">Not active</string>
     <string name="adb_status_connecting">Connecting</string>

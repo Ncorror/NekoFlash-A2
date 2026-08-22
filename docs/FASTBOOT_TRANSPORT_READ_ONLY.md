@@ -229,3 +229,75 @@ probing, no `download:`, no flash/erase/set_active/reboot/OEM/unlock command, an
 generic Fastboot terminal. Legacy ties `getvar:all`/partition inventory to an explicit
 manual diagnostics refresh; A2 must not move that broad query into automatic initial
 connection merely because fixed point diagnostics are working.
+
+## 9. Stage 6C3 exact-head verification record
+
+The fixed extended diagnostic slice is complete for its defined read-only scope at
+exact commit:
+
+`61fc0483b5e5579c34c43be9849a57a1b0693150`
+
+Reviewed exact-head CI evidence:
+
+- reports ZIP SHA-256:
+  `ec6802785ee679a49b181b3c9b72841695d45e18afea7e17f3356edae3100f1d`;
+- 156/156 unit tests passed;
+- lint passed with 0 errors / 4 known non-blocking warnings;
+- `assembleDebug` passed.
+
+Reviewed hardware evidence on the POCO X3 Pro Fastboot peer:
+
+- first diagnostics ZIP SHA-256:
+  `b123abe87334c017225d8f0d6cca2e99be36b9a4f7f99045e39fe94e53ecfadb`;
+- cumulative detach/reconnect diagnostics ZIP SHA-256:
+  `e2b599d1423d18aa2c667594ba31efbd22640693056477bf00c3450c571038f0`;
+- connected-state screenshot SHA-256:
+  `c5e5e568a8c256b2a6f4990ff227de24090149f21ff73c6e6b185d2a70b36e7e`.
+
+Both transport generations returned identical extended facts:
+
+- `getvar:slot-suffix -> FAIL GetVar Variable Not found`;
+- `getvar:secure -> OKAY yes`;
+- `getvar:serialno -> OKAY`, while exported payload/value were `<redacted>`;
+- `getvar:version-bootloader -> OKAY` with an empty/unreported value;
+- `getvar:anti -> OKAY 2`, therefore the `antirollback` fallback was not sent;
+- `getvar:is-userspace -> OKAY no`;
+- `getvar:super-partition-name -> FAIL GetVar Variable Not found`;
+- `getvar:snapshot-update-status -> FAIL GetVar Variable Not found`;
+- `getvar:max-fetch-size -> FAIL GetVar Variable Not found`.
+
+Protocol-level FAIL remained an optional/unreported value and left the session usable.
+A physical detach stopped/closed the first transport, reconnect created a new
+generation, and two manual USB Refresh actions on the healthy second generation were
+deduplicated without resending diagnostics.
+
+Therefore Stage 6C3 is **CI-verified and hardware-verified only for the fixed extended
+read-only Fastboot diagnostic set and its privacy/fail-closed rules**.
+
+## 10. Stage 6C4 manual privacy-safe getvar:all snapshot
+
+Supplied legacy deliberately ties `getvar:all` to a manual Fastboot diagnostic refresh
+rather than initial connection. A2 preserves that boundary: Stage 6C4 adds a dedicated
+manual UI action that is enabled only while the existing Fastboot transport is already
+connected. USB Refresh remains a separate USB inventory action.
+
+The Stage 6C4 command surface adds exactly one command:
+
+`getvar:all`
+
+No generic getvar API is exposed. The query uses the legacy 10 second command-write
+budget, 30 second response budget, 900 ms read slices, eight failed reads, 100 ms retry
+delay, and 1500 ms minimum patience. INFO/TEXT lines are parsed with legacy prefix and
+partition-scoped variable rules. OKAY produces a complete snapshot; FAIL after response
+lines produces a partial snapshot; FAIL without lines means unsupported without
+breaking the transport.
+
+Because the broad response can include `serialno` and other identifiers, all packet
+payloads for `getvar:all` are redacted from exported transport diagnostics. Only
+aggregate snapshot facts are logged: support/completeness, final status, variable and
+partition-metadata counts, ignored-line count, duplicate/conflict counts, and whether a
+serial was reported.
+
+This stage does not yet perform the legacy partition inventory backfill planner or any
+point probes such as `partition-size:*`, `partition-type:*`, `is-logical:*`, or
+`has-slot:*`. It does not add DATA/download or any mutation command.

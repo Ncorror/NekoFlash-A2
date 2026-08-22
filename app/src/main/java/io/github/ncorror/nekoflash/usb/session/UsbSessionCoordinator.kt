@@ -69,6 +69,7 @@ class UsbSessionCoordinator(context: Context) {
     @Volatile private var activeFastbootTransport: FastbootUsbTransport? = null
     private var failedAdbStableKey: String? = null
     private var failedFastbootStableKey: String? = null
+    private var activeFastbootManualSnapshotGeneration: Long? = null
 
     private val startupRunnable = Runnable { runStartupScan() }
     private val modeSwitchRunnable = Runnable { runModeSwitchTick() }
@@ -162,6 +163,96 @@ class UsbSessionCoordinator(context: Context) {
     /** Clears only the listener generation owned by the calling Activity. */
     fun clearObservationListener(generation: Long) {
         observationStore.clearListener(generation)
+    }
+
+    /**
+     * Explicit manual Fastboot diagnostic refresh. Stage 6C4 intentionally keeps
+     * broad `getvar:all` off the automatic connection path, matching supplied legacy.
+     */
+    fun refreshFastbootReadOnlySnapshot() {
+        if (!started) {
+            diagnostics.event("WARN", "FASTBOOT_GETVAR_ALL_REQUEST_REJECTED", "reason=coordinator_inactive")
+            return
+        }
+        val candidate = currentCandidate
+        if (candidate == null || candidate.mode != Mode.FASTBOOT) {
+            diagnostics.event("WARN", "FASTBOOT_GETVAR_ALL_REQUEST_REJECTED", "reason=no_fastboot_candidate")
+            return
+        }
+        val generation = fastbootTransportGeneration.get()
+        val transport = synchronized(fastbootTransportLock) { activeFastbootTransport }
+        if (transport == null || !transport.isConnected) {
+            diagnostics.event(
+                "WARN",
+                "FASTBOOT_GETVAR_ALL_REQUEST_REJECTED",
+                "generation=$generation reason=transport_not_connected",
+            )
+            return
+        }
+
+        val accepted = synchronized(fastbootTransportLock) {
+            if (activeFastbootManualSnapshotGeneration == generation) {
+                false
+            } else {
+                activeFastbootManualSnapshotGeneration = generation
+                true
+            }
+        }
+        if (!accepted) {
+            diagnostics.event(
+                "INFO",
+                "FASTBOOT_GETVAR_ALL_REQUEST_IGNORED",
+                "generation=$generation reason=already_in_flight",
+            )
+            return
+        }
+
+        diagnostics.event(
+            "INFO",
+            "FASTBOOT_GETVAR_ALL_REQUESTED",
+            "generation=$generation manual=true candidate=${candidate.stableKey}",
+        )
+        fastbootTransportExecutor.execute {
+            try {
+                val stillOwned = synchronized(fastbootTransportLock) {
+                    activeFastbootTransport === transport
+                }
+                if (!stillOwned || !isCurrentFastbootGeneration(generation, candidate.stableKey) || !transport.isConnected) {
+                    diagnostics.event(
+                        "INFO",
+                        "FASTBOOT_GETVAR_ALL_REQUEST_ABORTED",
+                        "generation=$generation reason=stale_transport",
+                    )
+                    return@execute
+                }
+
+                val summary = transport.collectManualGetVarAllSnapshot()
+                if (summary != null) {
+                    diagnostics.event(
+                        "INFO",
+                        "FASTBOOT_GETVAR_ALL_RESULT",
+                        "generation=$generation supported=${summary.supported} complete=${summary.complete} " +
+                            "finalType=${summary.finalStatus} variables=${summary.variableCount} " +
+                            "partitionMetadata=${summary.partitionMetadataCount} ignored=${summary.ignoredLineCount} " +
+                            "duplicates=${summary.duplicateVariableCount} " +
+                            "conflictingDuplicates=${summary.conflictingDuplicateCount} " +
+                            "serialReported=${summary.serialReported} payloadsRedacted=true",
+                    )
+                } else {
+                    diagnostics.event(
+                        "ERROR",
+                        "FASTBOOT_GETVAR_ALL_RESULT",
+                        "generation=$generation success=false transportHealthy=${transport.isConnected}",
+                    )
+                }
+            } finally {
+                synchronized(fastbootTransportLock) {
+                    if (activeFastbootManualSnapshotGeneration == generation) {
+                        activeFastbootManualSnapshotGeneration = null
+                    }
+                }
+            }
+        }
     }
 
     /**
