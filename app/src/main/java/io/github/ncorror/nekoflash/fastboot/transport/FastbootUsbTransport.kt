@@ -23,6 +23,24 @@ class FastbootUsbTransport(
     private val onEvent: (String, String) -> Unit,
     private val onTransportFailure: (FailureCode, String) -> Unit,
 ) {
+    data class PartitionInventorySummary(
+        val productReported: Boolean,
+        val topology: String,
+        val currentSlot: String?,
+        val entryCount: Int,
+        val slotFamilyCount: Int,
+        val physicalCount: Int,
+        val logicalCount: Int,
+        val unknownStorageCount: Int,
+        val normalCount: Int,
+        val advancedCount: Int,
+        val criticalCount: Int,
+        val incompleteEntryCount: Int,
+        val warningCount: Int,
+        val duplicateMetadataCount: Int,
+        val complete: Boolean,
+    )
+
     data class ManualGetVarAllSummary(
         val supported: Boolean,
         val complete: Boolean,
@@ -33,6 +51,7 @@ class FastbootUsbTransport(
         val duplicateVariableCount: Int,
         val conflictingDuplicateCount: Int,
         val serialReported: Boolean,
+        val inventory: PartitionInventorySummary? = null,
     )
 
     data class ConnectionInfo(
@@ -80,6 +99,9 @@ class FastbootUsbTransport(
 
     @Volatile
     private var failureReported = false
+
+    @Volatile
+    private var lastConnectionInfo: ConnectionInfo? = null
 
     val isConnected: Boolean
         get() = !closed && connection != null && fastbootInterface != null && endpointIn != null && endpointOut != null
@@ -148,7 +170,7 @@ class FastbootUsbTransport(
                 snapshotUpdateStatus = extended.snapshotUpdateStatus,
                 maxFetchSizeRaw = extended.maxFetchSizeRaw,
                 maxFetchSizeBytes = extended.maxFetchSizeBytes,
-            )
+            ).also { lastConnectionInfo = it }
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
             fail(FailureCode.INTERRUPTED, "Fastboot qualification interrupted")
@@ -206,6 +228,7 @@ class FastbootUsbTransport(
         endpointIn = null
         endpointOut = null
         fastbootInterface = null
+        lastConnectionInfo = null
         event("FASTBOOT_TRANSPORT_CLOSED", "device=${device.deviceName}")
     }
 
@@ -487,11 +510,12 @@ class FastbootUsbTransport(
 
                 "OKAY" -> {
                     if (packet.payload.isNotBlank()) lines += packet.payload
-                    val summary = FastbootGetVarAllPlan.parse(
+                    val snapshot = FastbootGetVarAllPlan.parse(
                         lines = lines,
                         complete = true,
                         finalStatus = "OKAY",
-                    ).summary().toPublicSummary()
+                    )
+                    val summary = buildManualGetVarAllSummary(snapshot)
                     eventGetVarAllComplete(summary)
                     return summary
                 }
@@ -502,12 +526,13 @@ class FastbootUsbTransport(
                         eventGetVarAllComplete(summary)
                         return summary
                     }
-                    val summary = FastbootGetVarAllPlan.parse(
+                    val snapshot = FastbootGetVarAllPlan.parse(
                         lines = lines,
                         complete = false,
                         finalStatus = "FAIL",
                         finalMessage = packet.payload,
-                    ).summary().toPublicSummary()
+                    )
+                    val summary = buildManualGetVarAllSummary(snapshot)
                     eventGetVarAllComplete(summary)
                     return summary
                 }
@@ -522,17 +547,67 @@ class FastbootUsbTransport(
         return fail(FailureCode.CLOSED, "Fastboot transport closed while waiting for getvar:all")
     }
 
-    private fun FastbootGetVarAllPlan.Summary.toPublicSummary(): ManualGetVarAllSummary =
-        ManualGetVarAllSummary(
-            supported = supported,
+    private fun buildManualGetVarAllSummary(
+        snapshot: FastbootGetVarAllPlan.Snapshot,
+    ): ManualGetVarAllSummary {
+        val connectionInfo = lastConnectionInfo
+        val supplemental = linkedMapOf<String, String>()
+        connectionInfo?.currentSlot?.takeIf { it.isNotBlank() }?.let { supplemental["current-slot"] = it }
+        connectionInfo?.slotCount?.takeIf { it.isNotBlank() }?.let { supplemental["slot-count"] = it }
+
+        val inventory = FastbootPartitionInventory.from(
+            source = snapshot,
+            fallbackProduct = connectionInfo?.product,
+            supplementalVariables = supplemental,
+        ).summary()
+        val publicInventory = inventory.toPublicSummary()
+        event(
+            "FASTBOOT_PARTITION_INVENTORY_COMPLETE",
+            "source=getvar_all topology=${publicInventory.topology} " +
+                "currentSlot=${publicInventory.currentSlot ?: "unreported"} " +
+                "entries=${publicInventory.entryCount} slotFamilies=${publicInventory.slotFamilyCount} " +
+                "physical=${publicInventory.physicalCount} logical=${publicInventory.logicalCount} " +
+                "unknownStorage=${publicInventory.unknownStorageCount} normal=${publicInventory.normalCount} " +
+                "advanced=${publicInventory.advancedCount} critical=${publicInventory.criticalCount} " +
+                "incomplete=${publicInventory.incompleteEntryCount} warnings=${publicInventory.warningCount} " +
+                "duplicates=${publicInventory.duplicateMetadataCount} complete=${publicInventory.complete} " +
+                "pointQueries=0 privacySafe=true",
+        )
+        return snapshot.summary().toPublicSummary(publicInventory)
+    }
+
+    private fun FastbootGetVarAllPlan.Summary.toPublicSummary(
+        inventory: PartitionInventorySummary? = null,
+    ): ManualGetVarAllSummary = ManualGetVarAllSummary(
+        supported = supported,
+        complete = complete,
+        finalStatus = finalStatus,
+        variableCount = variableCount,
+        partitionMetadataCount = partitionMetadataCount,
+        ignoredLineCount = ignoredLineCount,
+        duplicateVariableCount = duplicateVariableCount,
+        conflictingDuplicateCount = conflictingDuplicateCount,
+        serialReported = serialReported,
+        inventory = inventory,
+    )
+
+    private fun FastbootPartitionInventory.Summary.toPublicSummary(): PartitionInventorySummary =
+        PartitionInventorySummary(
+            productReported = productReported,
+            topology = topology.name,
+            currentSlot = currentSlot,
+            entryCount = entryCount,
+            slotFamilyCount = slotFamilyCount,
+            physicalCount = physicalCount,
+            logicalCount = logicalCount,
+            unknownStorageCount = unknownStorageCount,
+            normalCount = normalCount,
+            advancedCount = advancedCount,
+            criticalCount = criticalCount,
+            incompleteEntryCount = incompleteEntryCount,
+            warningCount = warningCount,
+            duplicateMetadataCount = duplicateMetadataCount,
             complete = complete,
-            finalStatus = finalStatus,
-            variableCount = variableCount,
-            partitionMetadataCount = partitionMetadataCount,
-            ignoredLineCount = ignoredLineCount,
-            duplicateVariableCount = duplicateVariableCount,
-            conflictingDuplicateCount = conflictingDuplicateCount,
-            serialReported = serialReported,
         )
 
     private fun eventGetVarAllComplete(summary: ManualGetVarAllSummary) {
@@ -543,7 +618,9 @@ class FastbootUsbTransport(
                 "partitionMetadata=${summary.partitionMetadataCount} ignored=${summary.ignoredLineCount} " +
                 "duplicates=${summary.duplicateVariableCount} " +
                 "conflictingDuplicates=${summary.conflictingDuplicateCount} " +
-                "serialReported=${summary.serialReported} payloadsRedacted=true",
+                "serialReported=${summary.serialReported} " +
+                "inventoryTopology=${summary.inventory?.topology ?: "unreported"} " +
+                "inventoryEntries=${summary.inventory?.entryCount ?: 0} payloadsRedacted=true",
         )
     }
 

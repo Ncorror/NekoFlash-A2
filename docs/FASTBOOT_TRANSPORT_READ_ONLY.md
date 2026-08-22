@@ -301,3 +301,81 @@ serial was reported.
 This stage does not yet perform the legacy partition inventory backfill planner or any
 point probes such as `partition-size:*`, `partition-type:*`, `is-logical:*`, or
 `has-slot:*`. It does not add DATA/download or any mutation command.
+
+## 11. Stage 6C4 exact-head verification record
+
+The manual privacy-safe broad snapshot is complete for its defined read-only scope at
+exact commit:
+
+`118d31b1ad57689985880ccfd3f7829b9ae70679`
+
+Reviewed exact-head CI evidence:
+
+- reports ZIP SHA-256:
+  `fe03b2e787d26e88970a10ba8a0b55afa865097cdfb4301bd098135f019dfb77`;
+- 164/164 unit tests passed;
+- lint passed with 0 errors / 4 known non-blocking warnings;
+- `assembleDebug` passed.
+
+Reviewed hardware evidence on the POCO X3 Pro Fastboot peer:
+
+- first manual-snapshot diagnostics ZIP SHA-256:
+  `448296d985e2df334405f16503809073dc259f98e158b89350dc950944bc27f9`;
+- cumulative detach/reconnect/manual-repeat diagnostics ZIP SHA-256:
+  `6f6ca06c4d84174d201831ba69dfb64d191c8aced0aa8824b8b1aaf2ff06906b`;
+- connected-state screenshot SHA-256:
+  `37d312640a2ea9710dfb13e702dfd4d159e5230902929570bfa978af25012266`.
+
+The first generation completed automatic qualification/point diagnostics before any
+`getvar:all` request appeared. One explicit UI press then sent exactly one broad query.
+Every completed snapshot reported:
+
+- `supported=true`;
+- `complete=true`;
+- final type `OKAY`;
+- 222 parsed variables;
+- 100 partition-metadata families;
+- 2 ignored lines;
+- 2 duplicate variables;
+- 0 conflicting duplicates;
+- `serialReported=true`;
+- `payloadsRedacted=true`.
+
+The cumulative campaign contains four explicit manual broad snapshots total: one before
+physical detach and three later user-triggered snapshots on the healthy second transport
+generation. No hidden or automatic `getvar:all` was observed. Every INFO/TEXT packet
+payload during the broad query was exported only as `<redacted>`, and no raw serial value
+appeared in diagnostic events. Detach stopped/closed transport; reconnect created a new
+generation; manual USB Refresh remained deduplicated.
+
+Therefore Stage 6C4 is **CI-verified and hardware-verified only for explicit manual,
+privacy-safe `getvar:all` collection on an already connected Fastboot peer**. It does not
+authorize automatic broad queries, point-probe inventory backfill, DATA transfer, or any
+mutation command.
+
+## 12. Stage 6C5 privacy-safe partition inventory/topology derivation
+
+Stage 6C5 ports the supplied legacy `FastbootPartitionInventory` rules but adds **zero new
+Fastboot wire commands**. It consumes only the in-memory snapshot already produced by the
+Stage 6C4 manual `getvar:all` action plus already collected non-sensitive fixed facts such
+as product/current-slot/slot-count.
+
+The inventory rules are intentionally conservative:
+
+- a concrete inventory entry exists only when size, type, or is-logical metadata was
+  actually reported;
+- `has-slot:<base>` is family metadata and never creates a partition by itself;
+- `vayu` is pinned to legacy A-only topology exactly as in supplied legacy;
+- contradictory A/B evidence on a pinned legacy A-only product becomes a critical
+  warning, never an instruction to synthesize `_a`/`_b` names;
+- for other products, positive slot evidence can establish A/B, while missing slot
+  variables alone remain UNKNOWN;
+- storage and risk classifications are informational only;
+- duplicate/conflict warnings contain codes/counts, not raw variable values;
+- exported inventory diagnostics contain aggregate topology/counts only and never the
+  raw `getvar:all` variable map or serial value.
+
+Stage 6C5 deliberately does not run the legacy `FastbootPartitionProbePlanner` yet.
+There are no `partition-size:*`, `partition-type:*`, `is-logical:*`, or `has-slot:*`
+backfill point queries in this slice. DATA/download, flash/erase/set_active/reboot,
+OEM/unlock, and generic Fastboot command entry remain closed.

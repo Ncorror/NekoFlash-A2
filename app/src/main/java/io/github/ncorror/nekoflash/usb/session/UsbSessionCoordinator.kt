@@ -236,7 +236,12 @@ class UsbSessionCoordinator(context: Context) {
                             "partitionMetadata=${summary.partitionMetadataCount} ignored=${summary.ignoredLineCount} " +
                             "duplicates=${summary.duplicateVariableCount} " +
                             "conflictingDuplicates=${summary.conflictingDuplicateCount} " +
-                            "serialReported=${summary.serialReported} payloadsRedacted=true",
+                            "serialReported=${summary.serialReported} " +
+                            "inventoryTopology=${summary.inventory?.topology ?: "unreported"} " +
+                            "inventoryEntries=${summary.inventory?.entryCount ?: 0} " +
+                            "inventoryWarnings=${summary.inventory?.warningCount ?: 0} " +
+                            "inventoryComplete=${summary.inventory?.complete ?: false} " +
+                            "pointQueries=0 payloadsRedacted=true",
                     )
                 } else {
                     diagnostics.event(

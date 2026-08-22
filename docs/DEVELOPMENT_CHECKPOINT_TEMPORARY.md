@@ -23,12 +23,12 @@ Canonical repository:
 
 Latest reviewed A2 implementation/evidence commit:
 
-`61fc0483b5e5579c34c43be9849a57a1b0693150`
-`add fixed Fastboot extended read-only diagnostics`
+`118d31b1ad57689985880ccfd3f7829b9ae70679`
+`add manual Fastboot getvar all snapshot`
 
-This exact commit contains Stage 6C3 and is backed by reviewed exact-head CI reports
-plus two real-device extended Fastboot diagnostic generations. The durable Fastboot
-record is `docs/FASTBOOT_TRANSPORT_READ_ONLY.md`.
+This exact commit contains Stage 6C4 and is backed by reviewed exact-head CI reports
+plus two real-device manual `getvar:all` campaigns. The durable Fastboot record is
+`docs/FASTBOOT_TRANSPORT_READ_ONLY.md`.
 
 Do not hard-code the commit that contains the current revision of this checkpoint.
 Resolve it from Git when resuming:
@@ -40,11 +40,11 @@ after the latest reviewed implementation/evidence commit before continuing devel
 
 Current completed implementation stage:
 
-**6C3 — fixed extended Fastboot read-only diagnostics — CI-VERIFIED / HARDWARE-VERIFIED**
+**6C4 — manual privacy-safe `getvar:all` snapshot — CI-VERIFIED / HARDWARE-VERIFIED**
 
 Active implementation stage in the current development patch:
 
-**6C4 — manual privacy-safe `getvar:all` snapshot — NOT YET VERIFIED**
+**6C5 — privacy-safe partition inventory/topology from the manual snapshot — NOT YET VERIFIED**
 
 Current transport boundary:
 
@@ -52,53 +52,57 @@ Current transport boundary:
 - `CANDIDATE_READY` is still not a protocol connection;
 - ADB handshake/AUTH and the fixed `shell:getprop ro.product.device` stream probe are
   hardware-verified;
-- Fastboot open/claim, `getvar:product`, Stage 6C2 core getvars, and Stage 6C3 extended
-  fixed getvars are hardware-verified through exact commit `61fc0483...`;
-- Stage 6C4 adds one explicit manual `getvar:all` snapshot action only; it remains off
-  the automatic connection path and exports aggregate counts rather than raw values;
-- there is still no generic ADB shell, arbitrary Fastboot API, automatic `getvar:all`,
-  partition point-probe inventory, DATA phase, or mutation path;
+- Fastboot open/claim, fixed point diagnostics, extended diagnostics, and explicit
+  manual `getvar:all` are hardware-verified through exact commit `118d31b1...`;
+- Stage 6C5 adds **no new wire command**: it only derives an in-memory partition and
+  slot-topology model from the already manual-only `getvar:all` snapshot plus fixed
+  non-sensitive point facts;
+- raw `getvar:all` payloads and serial values remain excluded from exported diagnostics;
+- there is still no automatic `getvar:all`, partition metadata backfill point probing,
+  DATA phase, mutation path, generic Fastboot command entry, or generic ADB shell;
 - destructive A2 operations: **NOT IMPLEMENTED**.
 
 Latest reviewed CI evidence:
 
-- exact commit: `61fc0483b5e5579c34c43be9849a57a1b0693150`;
-- reviewed reports: `NekoFlash-61fc0483b5e5579c34c43be9849a57a1b0693150-reports.zip`;
+- exact commit: `118d31b1ad57689985880ccfd3f7829b9ae70679`;
+- reviewed reports: `NekoFlash-118d31b1ad57689985880ccfd3f7829b9ae70679-reports.zip`;
 - reports SHA-256:
-  `ec6802785ee679a49b181b3c9b72841695d45e18afea7e17f3356edae3100f1d`;
-- 156/156 unit tests passed;
+  `fe03b2e787d26e88970a10ba8a0b55afa865097cdfb4301bd098135f019dfb77`;
+- 164/164 unit tests passed;
 - failures/errors/skipped: 0/0/0;
 - lint: 0 errors / 4 known baseline warnings;
 - `testDebugUnitTest`, `lintDebug`, and `assembleDebug`: success.
 
-Latest reviewed Stage 6C3 hardware evidence:
+Latest reviewed Stage 6C4 hardware evidence:
 
-- first diagnostics: `NekoFlash-A2-diagnostics-20260822-124536Z.zip`;
+- first manual-snapshot diagnostics: `NekoFlash-A2-diagnostics-20260822-132535Z.zip`;
 - first diagnostics SHA-256:
-  `b123abe87334c017225d8f0d6cca2e99be36b9a4f7f99045e39fe94e53ecfadb`;
-- cumulative detach/reconnect diagnostics: `NekoFlash-A2-diagnostics-20260822-124558Z.zip`;
+  `448296d985e2df334405f16503809073dc259f98e158b89350dc950944bc27f9`;
+- cumulative detach/reconnect/manual-repeat diagnostics:
+  `NekoFlash-A2-diagnostics-20260822-132640Z.zip`;
 - cumulative diagnostics SHA-256:
-  `e2b599d1423d18aa2c667594ba31efbd22640693056477bf00c3450c571038f0`;
-- connected-state screenshot: `7344.png`;
+  `6f6ca06c4d84174d201831ba69dfb64d191c8aced0aa8824b8b1aaf2ff06906b`;
+- connected-state screenshot: `7358.png`;
 - screenshot SHA-256:
-  `c5e5e568a8c256b2a6f4990ff227de24090149f21ff73c6e6b185d2a70b36e7e`;
-- both Fastboot generations returned the same Stage 6C3 facts:
-  `slot-suffix=unreported`, `secure=yes`, `serialReported=true`,
-  `version-bootloader=unreported`, `antiRollback=2` from `anti`, `is-userspace=no`,
-  `super-partition-name=unreported`, `snapshot-update-status=unreported`, and
-  `max-fetch-size=unreported`;
-- raw `serialno` payload/value remained `<redacted>` in exported diagnostic events;
-- `anti` returned a non-blank value, so `antirollback` fallback was correctly not sent;
-- protocol `FAIL / GetVar Variable Not found` for unsupported optional variables did
-  not break the session;
-- the intervening detach stopped/closed the transport and reconnect created a fresh
-  generation;
-- two manual USB Refresh actions on the healthy second generation both produced
-  `USB_DUPLICATE_CANDIDATE_IGNORED` without duplicating transport or diagnostics.
+  `37d312640a2ea9710dfb13e702dfd4d159e5230902929570bfa978af25012266`;
+- the first generation sent no `getvar:all` during automatic connection; the explicit
+  button press then sent exactly one manual request;
+- every completed snapshot reported `supported=true`, `complete=true`, final `OKAY`,
+  `variables=222`, `partitionMetadata=100`, `ignored=2`, `duplicates=2`,
+  `conflictingDuplicates=0`, `serialReported=true`, `payloadsRedacted=true`;
+- cumulative evidence contains four explicit manual snapshots total: one before detach
+  and three later user-triggered snapshots on the healthy second generation; no
+  automatic or hidden `getvar:all` occurred;
+- all `getvar:all` INFO/TEXT response payloads were exported only as `<redacted>`; raw
+  serial values did not appear in diagnostic events;
+- detach stopped/closed the first transport, reconnect created a fresh generation, and
+  two manual USB Refresh actions on the healthy second generation produced
+  `USB_DUPLICATE_CANDIDATE_IGNORED`.
 
-Hardware PASS now covers the fixed Stage 6C3 diagnostic boundary only. Stage 6C4
-manual `getvar:all`, partition inventory/topology point probes, operation
-re-enumeration/cancellation, and every destructive path remain outside this evidence.
+Hardware PASS now covers the Stage 6C4 manual privacy-safe broad snapshot boundary.
+Stage 6C5 inventory derivation, later bounded metadata backfill point queries, operation
+re-enumeration/cancellation, DATA/download, and every mutation path remain outside this
+evidence.
 
 Recovery order:
 
@@ -671,49 +675,44 @@ slot variables without breaking the session.
 These earlier slices prove only their stated read-only boundaries. The current active
 stage is recorded in Section 18.
 
-## 18. Completed Stage 6C3 and active Stage 6C4 manual getvar:all
+## 18. Completed Stage 6C4 and active Stage 6C5 partition inventory
 
-Stage 6C3 at exact commit
-`61fc0483b5e5579c34c43be9849a57a1b0693150` is CI-verified and hardware-verified.
-Reviewed exact-head CI passed 156/156 tests, lint with 0 errors / 4 known warnings,
-and `assembleDebug`. Two real-device Fastboot generations returned the same extended
-read-only facts: `secure=yes`, `serialReported=true`, `anti=2`, `is-userspace=no`;
-unsupported optional values stayed unreported. The actual serial payload/value was
-redacted from exported diagnostics. Detach/reconnect and manual USB Refresh
-deduplication remained correct.
+Stage 6C4 at exact commit
+`118d31b1ad57689985880ccfd3f7829b9ae70679` is CI-verified and hardware-verified.
+Reviewed exact-head CI passed 164/164 tests, lint with 0 errors / 4 known warnings,
+and `assembleDebug`. Real hardware preserved the manual-only boundary: no broad query
+was sent during automatic Fastboot connection, while each explicit UI request sent one
+`getvar:all` on the existing healthy transport generation.
 
-The next allowed Fastboot slice is Stage 6C4: preserve the supplied legacy boundary
-that runs `getvar:all` only on an explicit manual Fastboot diagnostic refresh. Stage
-6C4 adds one UI action that is enabled only for an already-connected Fastboot peer.
-That action sends exactly one `getvar:all` on the existing transport generation. It is
-not sent during initial connection and it is not attached to the USB Refresh button.
+The first exported manual snapshot completed with `OKAY`, 222 parsed variables and 100
+partition-metadata families. The cumulative campaign repeated the same snapshot after a
+physical detach/reconnect and additional explicit user presses. Every broad response
+payload was redacted from exported events, `serialReported=true` exposed only presence,
+and no raw serial value appeared in diagnostics. USB Refresh remained a separate action
+and continued to deduplicate the already healthy candidate.
 
-Legacy timing is preserved:
+The next allowed Fastboot slice is Stage 6C5: mechanically port the supplied legacy
+`FastbootPartitionInventory` rules, but **derive only from the snapshot already obtained
+by Stage 6C4**. Stage 6C5 sends no new Fastboot command. It may use the already collected
+fixed product/current-slot/slot-count facts as supplemental non-sensitive context.
 
-- command write budget: 10 seconds;
-- whole response budget: 30 seconds;
-- read slices: 900 ms;
-- up to eight failed/empty reads for `getvar:all`;
-- 100 ms retry delay;
-- minimum patience window: 1500 ms.
+Required inventory invariants:
 
-INFO/TEXT response lines are parsed with the supplied legacy parser rules. Protocol
-`OKAY` completes a full snapshot. `FAIL` with already received lines yields a partial
-read-only snapshot; `FAIL` with no lines means unsupported and leaves the transport
-usable. Timeout, short write, or transport ambiguity fails the generation closed and
-requires explicit USB Refresh before retry.
+- only concrete size/type/is-logical evidence creates an inventory entry;
+- `has-slot:<base>` is family metadata and never invents a partition by itself;
+- POCO X3 Pro / `vayu` remains legacy A-only even if the bootloader exposes noisy A/B
+  metadata; such contradiction is a warning, not authorization to synthesize suffixes;
+- non-vayu A/B topology requires positive slot evidence; missing slot variables alone
+  stay UNKNOWN;
+- partition risk classification is informational only and never authorizes a write;
+- duplicate/conflict warnings must not include raw variable values;
+- the exported Stage 6C5 diagnostic event contains aggregate counts/topology only;
+- no point query such as `partition-size:*`, `partition-type:*`, `is-logical:*`, or
+  `has-slot:*` is added in Stage 6C5.
 
-Privacy is stricter than legacy logging: `getvar:all` can contain unique identifiers,
-so every raw packet payload for this broad query is redacted from diagnostic events.
-Only aggregate counts/status plus `serialReported=true/false` may leave the transport
-layer. Raw variables remain in-memory only for parsing and are not exported by Stage
-6C4.
-
-Stage 6C4 still does **not** perform partition metadata backfill point queries and does
-not authorize any operation. `getvar:all` remains manual-only; DATA/download,
-flash/erase/set_active/reboot/OEM/unlock and generic Fastboot command entry stay closed.
-Partition inventory/topology construction is a later read-only slice after Stage 6C4
-is independently CI- and hardware-verified.
+Stage 6C5 still does not add partition backfill probes, DATA/download,
+flash/erase/set_active/reboot/OEM/unlock, or generic Fastboot command entry. Those remain
+closed until the inventory model itself is independently CI- and hardware-verified.
 
 ## 19. Evidence vocabulary
 
