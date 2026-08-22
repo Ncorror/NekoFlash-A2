@@ -8,9 +8,8 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 
 /**
- * A2 Fastboot read-only transport: fixed `getvar:product` qualification followed by a
- * closed core diagnostic set (`current-slot`, `slot-count`, `unlocked`,
- * `max-download-size`).
+ * A2 Fastboot read-only transport: fixed `getvar:product` qualification followed by
+ * closed core and extended diagnostic sets migrated from legacy refreshDiagnostics().
  *
  * Timing and response rules are migrated from the supplied legacy FastbootProtocol.
  * This class intentionally exposes no generic command API and no DATA/mutation path.
@@ -33,6 +32,17 @@ class FastbootUsbTransport(
         val unlocked: String? = null,
         val maxDownloadSizeRaw: String? = null,
         val maxDownloadSizeBytes: Long? = null,
+        val slotSuffix: String? = null,
+        val secure: String? = null,
+        val serialReported: Boolean = false,
+        val versionBootloader: String? = null,
+        val antiRollback: String? = null,
+        val antiRollbackSource: String? = null,
+        val isUserspace: String? = null,
+        val superPartitionName: String? = null,
+        val snapshotUpdateStatus: String? = null,
+        val maxFetchSizeRaw: String? = null,
+        val maxFetchSizeBytes: Long? = null,
     )
 
     enum class FailureCode {
@@ -108,12 +118,24 @@ class FastbootUsbTransport(
             }
             val qualification = readProductQualification() ?: return null
             val diagnostics = collectCoreDiagnostics() ?: return null
+            val extended = collectExtendedDiagnostics() ?: return null
             qualification.copy(
                 currentSlot = diagnostics.currentSlot,
                 slotCount = diagnostics.slotCount,
                 unlocked = diagnostics.unlocked,
                 maxDownloadSizeRaw = diagnostics.maxDownloadSizeRaw,
                 maxDownloadSizeBytes = diagnostics.maxDownloadSizeBytes,
+                slotSuffix = extended.slotSuffix,
+                secure = extended.secure,
+                serialReported = extended.serialReported,
+                versionBootloader = extended.versionBootloader,
+                antiRollback = extended.antiRollback,
+                antiRollbackSource = extended.antiRollbackSource,
+                isUserspace = extended.isUserspace,
+                superPartitionName = extended.superPartitionName,
+                snapshotUpdateStatus = extended.snapshotUpdateStatus,
+                maxFetchSizeRaw = extended.maxFetchSizeRaw,
+                maxFetchSizeBytes = extended.maxFetchSizeBytes,
             )
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -162,25 +184,8 @@ class FastbootUsbTransport(
         val values = linkedMapOf<String, String?>()
 
         for (variable in FastbootCoreDiagnosticsPlan.variables) {
-            if (closed) return fail(FailureCode.CLOSED, "Fastboot transport closed during read-only diagnostics")
-            event(
-                "FASTBOOT_DIAGNOSTIC_QUERY_STARTED",
-                "command=${variable.command} timeoutMs=${variable.timeoutMs}",
-            )
-            if (!writeFixedGetVarCommand(variable)) {
-                return fail(
-                    FailureCode.COMMAND_SHORT_WRITE,
-                    "Fastboot ${variable.command} command was not written completely",
-                )
-            }
-            val result = readFixedGetVar(variable) ?: return null
+            val result = queryFixedGetVar(variable) ?: return null
             values[variable.name] = result.value
-            event(
-                "FASTBOOT_DIAGNOSTIC_QUERY_RESULT",
-                "variable=${variable.name} finalType=${result.finalType} " +
-                    "value=${result.value?.take(EVENT_PAYLOAD_LIMIT) ?: "unreported"} " +
-                    "payload=${result.finalPayload.take(EVENT_PAYLOAD_LIMIT)}",
-            )
         }
 
         val maxDownloadSizeRaw = values["max-download-size"]
@@ -200,6 +205,87 @@ class FastbootUsbTransport(
                 "maxDownloadSizeBytes=${diagnostics.maxDownloadSizeBytes ?: "unreported"}",
         )
         return diagnostics
+    }
+
+    private fun collectExtendedDiagnostics(): FastbootExtendedDiagnostics? {
+        val values = linkedMapOf<String, String?>()
+
+        for (variable in FastbootExtendedDiagnosticsPlan.beforeAnti) {
+            val result = queryFixedGetVar(variable) ?: return null
+            values[variable.name] = result.value
+        }
+
+        val antiPrimary = queryFixedGetVar(FastbootExtendedDiagnosticsPlan.antiPrimary) ?: return null
+        values[FastbootExtendedDiagnosticsPlan.antiPrimary.name] = antiPrimary.value
+        val antiRollback: String?
+        val antiRollbackSource: String?
+        if (FastbootExtendedDiagnosticsPlan.shouldQueryAntiRollback(antiPrimary.value)) {
+            val fallback = queryFixedGetVar(FastbootExtendedDiagnosticsPlan.antiFallback) ?: return null
+            antiRollback = fallback.value
+            antiRollbackSource = if (fallback.value.isNullOrBlank()) null else FastbootExtendedDiagnosticsPlan.antiFallback.name
+        } else {
+            antiRollback = antiPrimary.value
+            antiRollbackSource = FastbootExtendedDiagnosticsPlan.antiPrimary.name
+        }
+
+        for (variable in FastbootExtendedDiagnosticsPlan.afterAnti) {
+            val result = queryFixedGetVar(variable) ?: return null
+            values[variable.name] = result.value
+        }
+
+        val maxFetchSizeRaw = values["max-fetch-size"]
+        val diagnostics = FastbootExtendedDiagnostics(
+            slotSuffix = values["slot-suffix"],
+            secure = values["secure"],
+            serialReported = !values["serialno"].isNullOrBlank(),
+            versionBootloader = values["version-bootloader"],
+            antiRollback = antiRollback,
+            antiRollbackSource = antiRollbackSource,
+            isUserspace = values["is-userspace"],
+            superPartitionName = values["super-partition-name"],
+            snapshotUpdateStatus = values["snapshot-update-status"],
+            maxFetchSizeRaw = maxFetchSizeRaw,
+            maxFetchSizeBytes = FastbootCoreDiagnosticsPlan.parseFastbootSize(maxFetchSizeRaw),
+        )
+        event(
+            "FASTBOOT_EXTENDED_DIAGNOSTICS_COMPLETE",
+            "slotSuffix=${diagnostics.slotSuffix ?: "unreported"} " +
+                "secure=${diagnostics.secure ?: "unreported"} " +
+                "serialReported=${diagnostics.serialReported} " +
+                "versionBootloader=${diagnostics.versionBootloader ?: "unreported"} " +
+                "antiRollback=${diagnostics.antiRollback ?: "unreported"} " +
+                "antiSource=${diagnostics.antiRollbackSource ?: "unreported"} " +
+                "isUserspace=${diagnostics.isUserspace ?: "unreported"} " +
+                "superPartitionName=${diagnostics.superPartitionName ?: "unreported"} " +
+                "snapshotUpdateStatus=${diagnostics.snapshotUpdateStatus ?: "unreported"} " +
+                "maxFetchSizeRaw=${diagnostics.maxFetchSizeRaw ?: "unreported"} " +
+                "maxFetchSizeBytes=${diagnostics.maxFetchSizeBytes ?: "unreported"}",
+        )
+        return diagnostics
+    }
+
+    private fun queryFixedGetVar(
+        variable: FastbootCoreDiagnosticsPlan.Variable,
+    ): FastbootReadOnlyGetVarSession.Decision.Complete? {
+        if (closed) return fail(FailureCode.CLOSED, "Fastboot transport closed during read-only diagnostics")
+        event(
+            "FASTBOOT_DIAGNOSTIC_QUERY_STARTED",
+            "command=${variable.command} timeoutMs=${variable.timeoutMs}",
+        )
+        if (!writeFixedGetVarCommand(variable)) {
+            return fail(
+                FailureCode.COMMAND_SHORT_WRITE,
+                "Fastboot ${variable.command} command was not written completely",
+            )
+        }
+        val result = readFixedGetVar(variable) ?: return null
+        event(
+            "FASTBOOT_DIAGNOSTIC_QUERY_RESULT",
+            "variable=${variable.name} finalType=${result.finalType} " +
+                "value=${variable.valueForEvent(result.value)?.take(EVENT_PAYLOAD_LIMIT) ?: "unreported"} " +
+                "payload=${variable.payloadForEvent(result.finalPayload).take(EVENT_PAYLOAD_LIMIT)}",
+        )
+        return result
     }
 
     private fun writeFixedGetVarCommand(variable: FastbootCoreDiagnosticsPlan.Variable): Boolean {
@@ -237,7 +323,10 @@ class FastbootUsbTransport(
                 )
             }
 
-            val packet = readPacket(FastbootReadOnlyTiming.nextReadTimeoutMs(remainingMs))
+            val packet = readPacket(
+                FastbootReadOnlyTiming.nextReadTimeoutMs(remainingMs),
+                redactPayload = variable.sensitive,
+            )
             if (packet == null) {
                 emptyReads += 1
                 event(
@@ -266,7 +355,7 @@ class FastbootUsbTransport(
                             "FASTBOOT_UNEXPECTED_RESPONSE"
                         },
                         "command=${variable.command} type=${packet.type} " +
-                            "payload=${packet.payload.take(EVENT_PAYLOAD_LIMIT)}",
+                            "payload=${variable.payloadForEvent(packet.payload).take(EVENT_PAYLOAD_LIMIT)}",
                     )
                 }
 
@@ -341,7 +430,10 @@ class FastbootUsbTransport(
         return fail(FailureCode.CLOSED, "Fastboot transport closed during qualification")
     }
 
-    private fun readPacket(timeoutMs: Int): FastbootReadOnlySession.Packet? {
+    private fun readPacket(
+        timeoutMs: Int,
+        redactPayload: Boolean = false,
+    ): FastbootReadOnlySession.Packet? {
         val usbConnection = connection ?: return null
         val input = endpointIn ?: return null
         val buffer = ByteArray(FASTBOOT_RESPONSE_BUFFER_BYTES)
@@ -355,9 +447,14 @@ class FastbootUsbTransport(
         if (bytesRead <= 0) return null
 
         val packet = FastbootReadOnlySession.parsePacket(buffer, bytesRead)
+        val eventPayload = if (redactPayload && packet.payload.isNotBlank()) {
+            "<redacted>"
+        } else {
+            packet.payload.take(EVENT_PAYLOAD_LIMIT)
+        }
         event(
             "FASTBOOT_RESPONSE",
-            "type=${packet.type} bytes=$bytesRead payload=${packet.payload.take(EVENT_PAYLOAD_LIMIT)}",
+            "type=${packet.type} bytes=$bytesRead payload=$eventPayload",
         )
         return packet
     }

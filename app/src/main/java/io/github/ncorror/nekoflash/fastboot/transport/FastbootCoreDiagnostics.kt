@@ -11,8 +11,20 @@ internal object FastbootCoreDiagnosticsPlan {
     data class Variable(
         val name: String,
         val timeoutMs: Int = GETVAR_TIMEOUT_MS,
+        val sensitive: Boolean = false,
     ) {
         val command: String = "getvar:$name"
+
+        fun valueForEvent(value: String?): String? = when {
+            value == null -> null
+            sensitive -> "<redacted>"
+            else -> value
+        }
+
+        fun payloadForEvent(payload: String): String = when {
+            sensitive && payload.isNotBlank() -> "<redacted>"
+            else -> payload
+        }
     }
 
     val variables: List<Variable> = listOf(

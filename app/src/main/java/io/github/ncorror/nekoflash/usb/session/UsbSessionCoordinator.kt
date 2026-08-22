@@ -941,9 +941,25 @@ class UsbSessionCoordinator(context: Context) {
                     )
                     diagnostics.event(
                         "INFO",
+                        "FASTBOOT_EXTENDED_DIAGNOSTICS_RESULT",
+                        "generation=$generation success=true " +
+                            "slotSuffix=${info.slotSuffix ?: "unreported"} " +
+                            "secure=${info.secure ?: "unreported"} " +
+                            "serialReported=${info.serialReported} " +
+                            "versionBootloader=${info.versionBootloader ?: "unreported"} " +
+                            "antiRollback=${info.antiRollback ?: "unreported"} " +
+                            "antiSource=${info.antiRollbackSource ?: "unreported"} " +
+                            "isUserspace=${info.isUserspace ?: "unreported"} " +
+                            "superPartitionName=${info.superPartitionName ?: "unreported"} " +
+                            "snapshotUpdateStatus=${info.snapshotUpdateStatus ?: "unreported"} " +
+                            "maxFetchSizeRaw=${info.maxFetchSizeRaw ?: "unreported"} " +
+                            "maxFetchSizeBytes=${info.maxFetchSizeBytes ?: "unreported"}",
+                    )
+                    diagnostics.event(
+                        "INFO",
                         "FASTBOOT_CONNECT_ENDED",
                         "generation=$generation success=true product=${info.product ?: "unreported"} " +
-                            "coreDiagnostics=true",
+                            "coreDiagnostics=true extendedDiagnostics=true",
                     )
                 }
             }

@@ -125,7 +125,7 @@ No mutation path is implied by this PASS.
 
 ## 6. Stage 6C2 fixed core read-only diagnostics
 
-The next slice mechanically follows the beginning of legacy
+Stage 6C2 mechanically follows the beginning of legacy
 `FastbootProtocol.refreshDiagnostics(force = true, knownProduct = qualifiedProduct)` but
 keeps a much smaller command surface. After the already proven product qualification,
 A2 may issue only these four point queries, in this exact order:
@@ -148,3 +148,84 @@ decimal token is converted to bytes when possible, while the raw value is retain
 This slice still exposes no arbitrary `getvar`, no `getvar:all`, no partition probing,
 no `download:`, no flash/erase/set_active/reboot/OEM/unlock command, and no generic
 Fastboot terminal.
+
+## 7. Stage 6C2 exact-head verification record
+
+The fixed core diagnostic slice is complete for its defined read-only scope at exact
+commit:
+
+`e1e33a45622a30d94b87c8187b3c8fcdf67f5c1d`
+
+Reviewed exact-head CI evidence:
+
+- reports ZIP SHA-256:
+  `ebaa7daadbc73237ee721cb14ea21c4811ebcd41df878bd63dd6bb693741e03a`;
+- 148/148 unit tests passed;
+- lint passed with 0 errors / 4 known non-blocking warnings;
+- `assembleDebug` passed.
+
+Reviewed hardware evidence on the POCO X3 Pro Fastboot peer:
+
+- first diagnostics ZIP SHA-256:
+  `7e33ad2dc7a84ec7cb7074311967a651dde4a2fa14fb70d6a40deea4b0d7e280`;
+- cumulative detach/reconnect diagnostics ZIP SHA-256:
+  `996f43268374c50bee8e68df4396b9d9956a007a2289e54af9bb6ee6f8f25dae`;
+- connected-state screenshot SHA-256:
+  `1f821b61a90a5ef79ae1f6c562f3e909c6935bc13e6c5dfccd9e154409c5a801`.
+
+Two independent transport generations returned the same facts:
+
+- `getvar:product -> OKAY vayu`;
+- `getvar:current-slot -> FAIL GetVar Variable Not found`;
+- `getvar:slot-count -> FAIL GetVar Variable Not found`;
+- `getvar:unlocked -> OKAY no`;
+- `getvar:max-download-size -> OKAY 805306368`.
+
+The decimal transfer limit parsed to `805306368` bytes (768 MiB). The protocol-level
+FAIL responses left the session usable exactly as intended. A physical detach stopped
+and closed the first transport, reconnect created a fresh generation, and two manual
+USB Refresh actions on the healthy second generation both produced
+`USB_DUPLICATE_CANDIDATE_IGNORED` without sending a second diagnostic sequence.
+
+Therefore Stage 6C2 is **CI-verified and hardware-verified only for the fixed core
+read-only Fastboot diagnostic set and its fail-closed lifecycle rules**. It does not
+imply support for arbitrary getvar, getvar:all, DATA transfer, or mutation commands.
+
+## 8. Stage 6C3 fixed extended read-only diagnostics
+
+The next slice appends the remaining fixed values from supplied legacy
+`FastbootProtocol.refreshDiagnostics()` after the already hardware-proven Stage 6C2
+prefix. Preserving that proven prefix is deliberate; the newly appended commands retain
+their legacy point-query semantics and relative order:
+
+1. `getvar:slot-suffix`
+2. `getvar:secure`
+3. `getvar:serialno`
+4. `getvar:version-bootloader`
+5. `getvar:anti`
+6. `getvar:antirollback` only when `anti` is unreported
+7. `getvar:is-userspace`
+8. `getvar:super-partition-name`
+9. `getvar:snapshot-update-status`
+10. `getvar:max-fetch-size`
+
+Each uses the legacy 5 second point-query budget and the existing 900 ms read slices /
+three failed reads / 100 ms retry delay / 1500 ms minimum patience. Protocol `FAIL`
+means that one optional value is unreported and leaves the session usable. Timeout,
+short write, lost interface, or other transport ambiguity fails the generation closed
+and requires explicit manual USB Refresh before retry.
+
+`antirollback` is a fallback only: it is never sent when `anti` produced a non-blank
+value. `max-fetch-size` uses the same legacy hexadecimal/decimal size parser as
+`max-download-size`.
+
+The wire request for `serialno` is retained for legacy diagnostic parity, but A2 treats
+its value as sensitive diagnostic data. Raw serial value/payload is redacted from
+transport events and the coordinator receives only whether a serial was reported. This
+privacy boundary does not alter the Fastboot request or response parsing.
+
+This slice still exposes no arbitrary getvar, no automatic `getvar:all`, no partition
+probing, no `download:`, no flash/erase/set_active/reboot/OEM/unlock command, and no
+generic Fastboot terminal. Legacy ties `getvar:all`/partition inventory to an explicit
+manual diagnostics refresh; A2 must not move that broad query into automatic initial
+connection merely because fixed point diagnostics are working.
