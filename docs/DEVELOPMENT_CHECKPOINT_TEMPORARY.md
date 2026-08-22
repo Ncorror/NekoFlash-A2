@@ -647,39 +647,46 @@ evidence.
 There is still deliberately no generic `shell:` API. `SIDELOAD` and unknown peers do
 not receive the probe, and probe failure does not create an automatic transport retry.
 
-## 17. Active Fastboot read-only bring-up and destructive ordering
+## 17. Completed Stage 6C1 and active Stage 6C2 Fastboot read-only diagnostics
 
-The next allowed transport slice is read-only Fastboot qualification. The current patch
-implements only:
+Stage 6C1 at exact commit
+`5b6b69f791663204a0abac8f32040fb5e3a1f9f6` is now CI-verified and
+hardware-verified for the fixed Fastboot peer qualification:
 
 `candidate -> permission -> openDevice -> claimInterface -> settle 350 ms ->
 getvar:product -> Fastboot response -> qualified peer`
 
-The implementation is mechanically constrained by supplied legacy
-`FastbootProtocol.connect()`, `qualifyConnection()`, `getVar()`, and
-`readGetVarResponse()` behavior. See `docs/FASTBOOT_TRANSPORT_READ_ONLY.md`.
+Exact-head CI passed 140/140 tests, lint with 0 errors / 4 known warnings, and
+`assembleDebug`. On the POCO X3 Pro patient, two independent Fastboot transport
+generations returned `OKAY vayu`. A physical detach closed the transport, reconnect
+created a fresh generation, and manual Refresh on the already healthy candidate was
+deduplicated. Permanent hashes and the exact event record live in
+`docs/FASTBOOT_TRANSPORT_READ_ONLY.md`.
 
-Initial hardware proof after exact-head CI must use manual entry into Fastboot and only
-observe the fixed `getvar:product` qualification. The broader known read-only getvars
-remain future work, including:
+The next allowed Fastboot slice is Stage 6C2: a fixed core read-only diagnostic set that
+follows the start of supplied legacy `refreshDiagnostics()` without opening a generic
+Fastboot API. After successful `getvar:product`, the only additional commands are:
 
-- `getvar:current-slot`
-- `getvar:slot-count`
-- `getvar:unlocked`
-- `getvar:max-download-size`
+- `getvar:current-slot`;
+- `getvar:slot-count`;
+- `getvar:unlocked`;
+- `getvar:max-download-size`.
 
-A generic/compatible Fastboot descriptor match is only a candidate until a real
-Fastboot protocol exchange confirms the peer. Legacy automatic attach/startup/mode-switch
-may pass a single generic fallback into that protocol qualification; explicit manual
-Search/chooser selection of a generic Fastboot fallback still requires the existing user
-warning/confirmation before permission/access.
+Each uses the legacy 5 second point-query budget and the already pinned Fastboot read
+retry window. Protocol `FAIL` for an optional variable records that value as unreported
+and continues. Timeout, short write, or transport ambiguity breaks the generation and
+requires explicit manual USB Refresh; no automatic reopen/retry is allowed.
+
+Still future read-only work includes the broader legacy diagnostic set, `getvar:all`,
+partition inventory/topology probes, and UI presentation of the proven facts.
 
 Destructive validation remains last:
 
 `descriptor -> permission -> lifecycle -> ADB read-only -> Fastboot read-only ->
 re-enumeration -> cancellation/fail-closed -> destructive last`
 
-Do not run flash/erase/unlock merely to accelerate validation.
+Do not run `download:`, flash, erase, set_active, reboot, OEM/unlock, or any other
+mutation merely to accelerate validation.
 
 ## 18. Evidence vocabulary
 

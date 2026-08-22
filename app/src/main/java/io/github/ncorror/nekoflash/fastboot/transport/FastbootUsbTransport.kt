@@ -8,13 +8,14 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 
 /**
- * First A2 Fastboot transport slice: open/claim and one fixed read-only
- * `getvar:product` peer qualification.
+ * A2 Fastboot read-only transport: fixed `getvar:product` qualification followed by a
+ * closed core diagnostic set (`current-slot`, `slot-count`, `unlocked`,
+ * `max-download-size`).
  *
- * The timing and response rules are migrated from the supplied legacy
- * FastbootProtocol. This class intentionally exposes no generic command API and no
- * DATA/mutation path. A failed generation is closed and must be retried explicitly by
- * the coordinator; this class never reopens the device on its own.
+ * Timing and response rules are migrated from the supplied legacy FastbootProtocol.
+ * This class intentionally exposes no generic command API and no DATA/mutation path.
+ * A failed generation is closed and must be retried explicitly by the coordinator;
+ * this class never reopens the device on its own.
  */
 class FastbootUsbTransport(
     private val usbManager: UsbManager,
@@ -27,6 +28,11 @@ class FastbootUsbTransport(
         val product: String?,
         val qualifierFinalType: String,
         val qualifierFinalPayload: String,
+        val currentSlot: String? = null,
+        val slotCount: String? = null,
+        val unlocked: String? = null,
+        val maxDownloadSizeRaw: String? = null,
+        val maxDownloadSizeBytes: Long? = null,
     )
 
     enum class FailureCode {
@@ -100,7 +106,15 @@ class FastbootUsbTransport(
                     "Fastboot getvar:product command was not written completely",
                 )
             }
-            readProductQualification()
+            val qualification = readProductQualification() ?: return null
+            val diagnostics = collectCoreDiagnostics() ?: return null
+            qualification.copy(
+                currentSlot = diagnostics.currentSlot,
+                slotCount = diagnostics.slotCount,
+                unlocked = diagnostics.unlocked,
+                maxDownloadSizeRaw = diagnostics.maxDownloadSizeRaw,
+                maxDownloadSizeBytes = diagnostics.maxDownloadSizeBytes,
+            )
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
             fail(FailureCode.INTERRUPTED, "Fastboot qualification interrupted")
@@ -142,6 +156,125 @@ class FastbootUsbTransport(
             "command=${FastbootReadOnlySession.PRODUCT_COMMAND} sent=$sent expected=${command.size}",
         )
         return sent == command.size
+    }
+
+    private fun collectCoreDiagnostics(): FastbootCoreDiagnostics? {
+        val values = linkedMapOf<String, String?>()
+
+        for (variable in FastbootCoreDiagnosticsPlan.variables) {
+            if (closed) return fail(FailureCode.CLOSED, "Fastboot transport closed during read-only diagnostics")
+            event(
+                "FASTBOOT_DIAGNOSTIC_QUERY_STARTED",
+                "command=${variable.command} timeoutMs=${variable.timeoutMs}",
+            )
+            if (!writeFixedGetVarCommand(variable)) {
+                return fail(
+                    FailureCode.COMMAND_SHORT_WRITE,
+                    "Fastboot ${variable.command} command was not written completely",
+                )
+            }
+            val result = readFixedGetVar(variable) ?: return null
+            values[variable.name] = result.value
+            event(
+                "FASTBOOT_DIAGNOSTIC_QUERY_RESULT",
+                "variable=${variable.name} finalType=${result.finalType} " +
+                    "value=${result.value?.take(EVENT_PAYLOAD_LIMIT) ?: "unreported"} " +
+                    "payload=${result.finalPayload.take(EVENT_PAYLOAD_LIMIT)}",
+            )
+        }
+
+        val maxDownloadSizeRaw = values["max-download-size"]
+        val diagnostics = FastbootCoreDiagnostics(
+            currentSlot = values["current-slot"],
+            slotCount = values["slot-count"],
+            unlocked = values["unlocked"],
+            maxDownloadSizeRaw = maxDownloadSizeRaw,
+            maxDownloadSizeBytes = FastbootCoreDiagnosticsPlan.parseFastbootSize(maxDownloadSizeRaw),
+        )
+        event(
+            "FASTBOOT_CORE_DIAGNOSTICS_COMPLETE",
+            "currentSlot=${diagnostics.currentSlot ?: "unreported"} " +
+                "slotCount=${diagnostics.slotCount ?: "unreported"} " +
+                "unlocked=${diagnostics.unlocked ?: "unreported"} " +
+                "maxDownloadSizeRaw=${diagnostics.maxDownloadSizeRaw ?: "unreported"} " +
+                "maxDownloadSizeBytes=${diagnostics.maxDownloadSizeBytes ?: "unreported"}",
+        )
+        return diagnostics
+    }
+
+    private fun writeFixedGetVarCommand(variable: FastbootCoreDiagnosticsPlan.Variable): Boolean {
+        val usbConnection = connection ?: return false
+        val output = endpointOut ?: return false
+        val command = variable.command.toByteArray(Charsets.US_ASCII)
+        val sent = usbConnection.bulkTransfer(
+            output,
+            command,
+            0,
+            command.size,
+            variable.timeoutMs,
+        )
+        event(
+            "FASTBOOT_COMMAND_SENT",
+            "command=${variable.command} sent=$sent expected=${command.size}",
+        )
+        return sent == command.size
+    }
+
+    private fun readFixedGetVar(
+        variable: FastbootCoreDiagnosticsPlan.Variable,
+    ): FastbootReadOnlyGetVarSession.Decision.Complete? {
+        val session = FastbootReadOnlyGetVarSession(variable.name)
+        val startedNs = System.nanoTime()
+        var emptyReads = 0
+
+        while (!closed) {
+            val elapsedMs = ((System.nanoTime() - startedNs).coerceAtLeast(0L) / 1_000_000L)
+            val remainingMs = variable.timeoutMs.toLong() - elapsedMs
+            if (remainingMs <= 0L) {
+                return fail(
+                    FailureCode.RESPONSE_TIMEOUT,
+                    "${variable.command} response timeout after confirmed command send ($emptyReads empty reads)",
+                )
+            }
+
+            val packet = readPacket(FastbootReadOnlyTiming.nextReadTimeoutMs(remainingMs))
+            if (packet == null) {
+                emptyReads += 1
+                event(
+                    "FASTBOOT_IN_EMPTY",
+                    "command=${variable.command} failedRead=$emptyReads/${FastbootReadOnlyTiming.MAX_FAILED_READS} " +
+                        "elapsedMs=$elapsedMs remainingMs=$remainingMs",
+                )
+                if (FastbootReadOnlyTiming.shouldFailAfterEmptyRead(emptyReads, elapsedMs)) {
+                    return fail(
+                        FailureCode.RESPONSE_TIMEOUT,
+                        "Fastboot read failed $emptyReads times for ${variable.command} after confirmed command send",
+                    )
+                }
+                if (FastbootReadOnlyTiming.READ_RETRY_DELAY_MS > 0L) {
+                    Thread.sleep(FastbootReadOnlyTiming.READ_RETRY_DELAY_MS)
+                }
+                continue
+            }
+
+            when (val decision = session.accept(packet)) {
+                FastbootReadOnlyGetVarSession.Decision.Continue -> {
+                    event(
+                        if (packet.type == "INFO" || packet.type == "TEXT") {
+                            "FASTBOOT_INFO"
+                        } else {
+                            "FASTBOOT_UNEXPECTED_RESPONSE"
+                        },
+                        "command=${variable.command} type=${packet.type} " +
+                            "payload=${packet.payload.take(EVENT_PAYLOAD_LIMIT)}",
+                    )
+                }
+
+                is FastbootReadOnlyGetVarSession.Decision.Complete -> return decision
+            }
+        }
+
+        return fail(FailureCode.CLOSED, "Fastboot transport closed while waiting for ${variable.command}")
     }
 
     private fun readProductQualification(): ConnectionInfo? {
@@ -280,7 +413,7 @@ class FastbootUsbTransport(
         return input to output
     }
 
-    private fun fail(code: FailureCode, message: String): ConnectionInfo? {
+    private fun <T> fail(code: FailureCode, message: String): T? {
         event("FASTBOOT_CONNECT_FAILED", "code=${code.name} message=${message.take(EVENT_PAYLOAD_LIMIT)}")
         if (!failureReported) {
             failureReported = true

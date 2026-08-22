@@ -84,3 +84,67 @@ FASTBOOT_CONNECT_ENDED`
 For the current POCO X3 Pro patient, the expected product is normally `vayu`. A
 protocol-level `FAIL` remains a qualified Fastboot peer but must be recorded as
 `product=unreported` rather than inventing a product value.
+
+## 5. Stage 6C1 exact-head verification record
+
+The fixed `getvar:product` slice is complete for its defined read-only scope at exact
+commit:
+
+`5b6b69f791663204a0abac8f32040fb5e3a1f9f6`
+
+Reviewed exact-head CI evidence:
+
+- reports ZIP SHA-256:
+  `a607e2d73fd623a8539cab9c6f8eafc1a3d3be413488f82d40f4e0f3b867861a`;
+- 140/140 unit tests passed;
+- lint passed with 0 errors / 4 known non-blocking warnings;
+- `assembleDebug` passed.
+
+Reviewed hardware evidence on the POCO X3 Pro Fastboot peer:
+
+- first diagnostics ZIP SHA-256:
+  `8ef08fe7541ae3133cdfaa853e99ed1cfc9410b969d0b78fa6c8f1121da688a2`;
+- cumulative detach/reconnect diagnostics ZIP SHA-256:
+  `a16060babc4bb7c9cfd44e7e10414f9fc1a95dd582b0f9b77882bf6915f871da`;
+- connected-state screenshot SHA-256:
+  `07874fe2268e4d47834487b9f9c66a9e037cdc57b2c4f8438b97a183bf467f22`.
+
+The patient identified as canonical Fastboot (`0xFF/0x42/0x03`, bulk IN `0x81`,
+bulk OUT `0x01`). Two separate transport generations both produced:
+
+`getvar:product -> OKAY vayu`
+
+A physical detach produced `FASTBOOT_TRANSPORT_STOP reason=device_detached` followed by
+`FASTBOOT_TRANSPORT_CLOSED`. After reconnect, a manual USB Refresh while the same healthy
+candidate was active produced `USB_DUPLICATE_CANDIDATE_IGNORED`; it did not create a
+second transport or send a duplicate qualification command.
+
+Therefore Stage 6C1 is **CI-verified and hardware-verified only for Fastboot open/claim,
+fixed `getvar:product` qualification, detach/reconnect, and duplicate-refresh suppression**.
+No mutation path is implied by this PASS.
+
+## 6. Stage 6C2 fixed core read-only diagnostics
+
+The next slice mechanically follows the beginning of legacy
+`FastbootProtocol.refreshDiagnostics(force = true, knownProduct = qualifiedProduct)` but
+keeps a much smaller command surface. After the already proven product qualification,
+A2 may issue only these four point queries, in this exact order:
+
+1. `getvar:current-slot`
+2. `getvar:slot-count`
+3. `getvar:unlocked`
+4. `getvar:max-download-size`
+
+Each point query keeps the legacy default 5 second budget and the already pinned
+900 ms read slices / three failed reads / 100 ms retry delay / 1500 ms minimum patience.
+A protocol-level `FAIL` means that one optional variable is unreported and leaves the
+session usable. A response timeout, short command write, lost interface, or other
+transport ambiguity fails the generation closed and requires explicit manual USB Refresh
+before another attempt.
+
+`max-download-size` parsing remains legacy-faithful: the first hexadecimal `0x...` or
+decimal token is converted to bytes when possible, while the raw value is retained.
+
+This slice still exposes no arbitrary `getvar`, no `getvar:all`, no partition probing,
+no `download:`, no flash/erase/set_active/reboot/OEM/unlock command, and no generic
+Fastboot terminal.
